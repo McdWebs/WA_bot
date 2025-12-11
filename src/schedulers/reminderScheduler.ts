@@ -62,13 +62,49 @@ export class ReminderScheduler {
 
   private async checkUserReminders(user: User, settings: ReminderSetting[]): Promise<void> {
     try {
-      const location = user.location || 'Jerusalem';
+      let location = user.location || 'Jerusalem';
       const timezone = user.timezone || 'Asia/Jerusalem';
       const today = new Date();
       const todayStr = today.toISOString().split('T')[0];
 
-      // Get today's Hebrew calendar data
-      const hebcalData = await hebcalService.getHebcalData(location, todayStr);
+      // Get today's Hebrew calendar data with fallback for invalid locations
+      let hebcalData;
+      try {
+        hebcalData = await hebcalService.getHebcalData(location, todayStr);
+      } catch (error: any) {
+        // If location is invalid (404), try fallback locations
+        if (error?.response?.status === 404 || error?.status === 404) {
+          logger.warn(`Invalid location "${location}" for user ${user.phone_number}, trying fallback locations`);
+          
+          // Try common fallback locations
+          const fallbackLocations = ['Jerusalem', 'Tel Aviv', 'Haifa', 'New York', 'Los Angeles'];
+          let foundValidLocation = false;
+          
+          for (const fallback of fallbackLocations) {
+            try {
+              hebcalData = await hebcalService.getHebcalData(fallback, todayStr);
+              location = fallback;
+              foundValidLocation = true;
+              logger.info(`Using fallback location "${fallback}" for user ${user.phone_number}`);
+              
+              // Update user's location in database to fix it for future
+              await supabaseService.updateUser(user.phone_number, { location: fallback });
+              break;
+            } catch (fallbackError) {
+              // Continue to next fallback
+              continue;
+            }
+          }
+          
+          if (!foundValidLocation) {
+            logger.error(`Could not find valid location for user ${user.phone_number}, skipping reminders`);
+            return;
+          }
+        } else {
+          // Re-throw non-404 errors
+          throw error;
+        }
+      }
       
       for (const setting of settings) {
         if (!setting.enabled) continue;

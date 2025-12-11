@@ -164,14 +164,19 @@ export class MessageHandler {
       const isEditReminderButton = normalizedButton.startsWith('edit_');
       
       // Check if this is a time selection from time_picker template (second step: select time range)
-      // Time picker sends IDs: "0", "15", "30", "45", "60"
+      // Time picker sends IDs: "0", "15", "30", "45", "60" (standard)
+      // Test IDs: "10", "20", "60", "120", "3600" (for short interval testing)
       const isTimePickerSelection = 
         normalizedButton === '0' ||
         normalizedButton === '15' ||
         normalizedButton === '30' ||
         normalizedButton === '45' ||
         normalizedButton === '60' ||
-        /^(0|15|30|45|60)$/.test(normalizedButton);
+        normalizedButton === '10' ||  // Test: 10 seconds
+        normalizedButton === '20' ||  // Test: 20 seconds
+        normalizedButton === '120' || // Test: 2 minutes
+        normalizedButton === '3600' || // Test: 1 hour
+        /^(0|15|30|45|60|10|20|120|3600)$/.test(normalizedButton);
 
       if (isFirstMenuItem) {
         // Step 1: User selected reminder type (Sunset) → send time picker template
@@ -450,12 +455,18 @@ export class MessageHandler {
 
       // Map time ID to time offset in minutes (negative = before sunset)
       // '0' = at sunset (0 minutes), '15' = 15 minutes before (-15), etc.
+      // Test IDs: '10' = 10 seconds, '20' = 20 seconds, '120' = 2 minutes, '3600' = 1 hour
       const timeOffsetMap: Record<string, number> = {
         '0': 0,      // At sunset
         '15': -15,   // 15 minutes before
         '30': -30,   // 30 minutes before
         '45': -45,   // 45 minutes before
         '60': -60,   // 60 minutes before (1 hour)
+        // Test intervals (convert seconds to negative minutes)
+        '10': -0.016,   // 10 seconds ≈ -0.016 minutes (will round to current minute)
+        '20': -0.033,   // 20 seconds ≈ -0.033 minutes (will round to current minute)
+        '120': -2,      // 2 minutes before
+        '3600': -60,    // 1 hour before (same as '60')
       };
 
       const timeOffsetMinutes = timeOffsetMap[selectedTimeId] ?? 0;
@@ -467,6 +478,11 @@ export class MessageHandler {
         '30': '30 דקות לפני השקיעה',
         '45': '45 דקות לפני השקיעה',
         '60': 'שעה לפני השקיעה',
+        // Test descriptions
+        '10': 'בעוד 10 שניות',
+        '20': 'בעוד 20 שניות',
+        '120': 'בעוד 2 דקות',
+        '3600': 'בעוד שעה אחת',
       };
 
       const timeDescription = timeDescriptions[selectedTimeId] || `תזכורת ${selectedTimeId} דקות לפני השקיעה`;
@@ -573,12 +589,18 @@ export class MessageHandler {
       }
 
       // Map time ID to time offset in minutes (negative = before sunset)
+      // Test IDs: '10' = 10 seconds, '20' = 20 seconds, '120' = 2 minutes, '3600' = 1 hour
       const timeOffsetMap: Record<string, number> = {
         '0': 0,      // At sunset
         '15': -15,   // 15 minutes before
         '30': -30,   // 30 minutes before
         '45': -45,   // 45 minutes before
         '60': -60,   // 60 minutes before (1 hour)
+        // Test intervals (convert seconds to negative minutes)
+        '10': -0.016,   // 10 seconds ≈ -0.016 minutes
+        '20': -0.033,   // 20 seconds ≈ -0.033 minutes
+        '120': -2,      // 2 minutes before
+        '3600': -60,    // 1 hour before (same as '60')
       };
 
       const timeOffsetMinutes = timeOffsetMap[selectedTimeId] ?? 0;
@@ -608,6 +630,11 @@ export class MessageHandler {
         '30': '30 דקות לפני השקיעה',
         '45': '45 דקות לפני השקיעה',
         '60': 'שעה לפני השקיעה',
+        // Test descriptions
+        '10': 'בעוד 10 שניות',
+        '20': 'בעוד 20 שניות',
+        '120': 'בעוד 2 דקות',
+        '3600': 'בעוד שעה אחת',
       };
 
       const timeDescription = timeDescriptions[selectedTimeId] || `תזכורת ${selectedTimeId} דקות לפני השקיעה`;
