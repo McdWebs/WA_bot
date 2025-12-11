@@ -1,0 +1,39 @@
+{
+  "name": "whatsapp-reminders-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp reminders bot for Hebrew calendar events",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "watch": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "test:send": "ts-node test-send-message.ts"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "reminders",
+    "hebrew-calendar"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "twilio": "^4.20.0",
+    "express": "^4.18.2",
+    "node-cron": "^3.0.3",
+    "axios": "^1.6.5",
+    "dotenv": "^16.3.1",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.6",
+    "@types/node-cron": "^3.0.11",
+    "typescript": "^5.3.3",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0"
+  }
+}
+

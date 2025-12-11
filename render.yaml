@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: whatsapp-reminders-bot
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_WHATSAPP_FROM
+        sync: false
+      - key: TWILIO_WEBHOOK_SECRET
+        sync: false
+      - key: WHATSAPP_TEMPLATE_WELCOME
+        sync: false
+      - key: HEBCAL_API_BASE_URL
+        value: https://www.hebcal.com/hebcal
+      - key: DEFAULT_TIMEZONE
+        value: Asia/Jerusalem
+      - key: LOG_LEVEL
+        value: info
+
