@@ -9,7 +9,9 @@
     "dev": "ts-node src/index.ts",
     "watch": "ts-node-dev --respawn --transpile-only src/index.ts",
     "test:send": "ts-node test-send-message.ts",
-    "test:reminder-short": "ts-node test-reminder-short.ts"
+    "test:reminder-now": "ts-node test-reminder-now.ts",
+    "test:template-details": "ts-node test-template-details.ts",
+    "test:shema-time": "ts-node test-shema-time.ts"
   },
   "keywords": [
     "whatsapp",

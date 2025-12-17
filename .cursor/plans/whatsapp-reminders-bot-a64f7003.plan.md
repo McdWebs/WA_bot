@@ -1,4 +1,42 @@
-<!-- a64f7003-a568-4917-8f90-9140a885ec5f 0fb14f74-294c-4851-8a08-4fe4e0d9f22a -->
+---
+name: WhatsApp Reminders Bot Implementation Plan
+overview: ""
+todos:
+  - id: c475479f-0df6-4185-8a6f-ea6d395318c9
+    content: Initialize Node.js/TypeScript project with package.json, tsconfig.json, and folder structure
+    status: pending
+  - id: a040b623-ffd1-4513-8e63-b146e5b5b82b
+    content: Set up WhatsApp Web.js client with QR code authentication and message handlers
+    status: pending
+  - id: 6b7c8984-dc2e-4883-bd8b-63871ab61782
+    content: Implement Google Sheets service with OAuth 2.0 authentication and CRUD operations
+    status: pending
+  - id: b503558b-5968-4f47-adae-b8c3b9bb621f
+    content: Create Hebcal API integration service for fetching Hebrew calendar data (sunset, candle lighting, prayer times)
+    status: pending
+  - id: b16b2e5e-bcde-4c84-82ae-a31ddbcc9cf2
+    content: Implement user registration flow with location collection and timezone detection
+    status: pending
+  - id: fd3ea6a7-c3a4-45d8-904e-7fb5e4dc3545
+    content: Build settings command handlers for users to configure reminder times for each type
+    status: pending
+  - id: f2d32500-b474-48d9-85f7-fdaf7e0ad6f9
+    content: Create bot menu system with reminder type selection and help commands
+    status: pending
+  - id: 9ec62085-9c55-4040-a88d-21415ca1fedc
+    content: Implement pre-approved message template system with dynamic data placeholders
+    status: pending
+  - id: b4e1e012-8abc-42a0-ad7c-b051f5b86e45
+    content: Build reminder scheduler that loads user settings, checks Hebcal data, and sends WhatsApp messages at scheduled times
+    status: pending
+  - id: 004ddeb7-9a6a-4ff3-abf6-1e4f530fcee1
+    content: Create timezone detection and conversion utilities for handling user locations
+    status: pending
+  - id: 9f08afd5-e62b-4270-9684-3528b83d7437
+    content: Configure Render deployment settings, environment variables, and health check endpoint
+    status: pending
+---
+
 # WhatsApp Reminders Bot Implementation Plan
 
 ## Architecture Overview
@@ -183,17 +221,3 @@ A Node.js/TypeScript WhatsApp bot using Twilio WhatsApp API for messaging, integ
 - Timezone detection from location may require geocoding API (Google Maps or similar)
 - Scheduler needs to handle timezone conversions correctly
 - WhatsApp session persistence for Render deployment
-
-### To-dos
-
-- [ ] Initialize Node.js/TypeScript project with package.json, tsconfig.json, and folder structure
-- [ ] Set up WhatsApp Web.js client with QR code authentication and message handlers
-- [ ] Implement Google Sheets service with OAuth 2.0 authentication and CRUD operations
-- [ ] Create Hebcal API integration service for fetching Hebrew calendar data (sunset, candle lighting, prayer times)
-- [ ] Implement user registration flow with location collection and timezone detection
-- [ ] Build settings command handlers for users to configure reminder times for each type
-- [ ] Create bot menu system with reminder type selection and help commands
-- [ ] Implement pre-approved message template system with dynamic data placeholders
-- [ ] Build reminder scheduler that loads user settings, checks Hebcal data, and sends WhatsApp messages at scheduled times
-- [ ] Create timezone detection and conversion utilities for handling user locations
-- [ ] Configure Render deployment settings, environment variables, and health check endpoint

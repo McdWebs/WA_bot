@@ -1,17 +1,18 @@
-import supabaseService from '../../services/supabase';
-import settingsCommand from './settings';
-import messageTemplateService from '../../utils/messageTemplates';
-import logger from '../../utils/logger';
+import supabaseService from "../../services/supabase";
+import settingsCommand from "./settings";
+import messageTemplateService from "../../utils/messageTemplates";
+import logger from "../../utils/logger";
 
 export class MenuCommand {
   async showMenu(phoneNumber: string): Promise<string> {
     try {
       const user = await supabaseService.getUserByPhone(phoneNumber);
-      if (!user || user.status !== 'active') {
-        return 'Please complete registration first. Send any message to get started.';
+      if (!user || user.status !== "active") {
+        return "Please complete registration first. Send any message to get started.";
       }
 
-      return `📱 *Reminders Bot Menu*\n\n` +
+      return (
+        `📱 *Reminders Bot Menu*\n\n` +
         `Available Reminder Types:\n\n` +
         `1️⃣ *Sunset Times* 🌅\n` +
         `   Get reminders for sunset times\n` +
@@ -35,15 +36,17 @@ export class MenuCommand {
         `• /candles 15 (15 minutes before candle lighting)\n` +
         `• /prayer 0 (at prayer time)\n` +
         `• /reminders (view all reminders)\n` +
-        `• /edit <id> 45 (edit reminder to 45 min before)`;
+        `• /edit <id> 45 (edit reminder to 45 min before)`
+      );
     } catch (error) {
-      logger.error('Error showing menu:', error);
-      return 'Sorry, there was an error displaying the menu.';
+      logger.error("Error showing menu:", error);
+      return "Sorry, there was an error displaying the menu.";
     }
   }
 
   async showHelp(phoneNumber: string): Promise<string> {
-    return `❓ *Help & Guidance*\n\n` +
+    return (
+      `❓ *Help & Guidance*\n\n` +
       `*How to use the bot:*\n\n` +
       `1. Complete registration by providing your location\n` +
       `2. Choose reminder types from the menu\n` +
@@ -58,13 +61,14 @@ export class MenuCommand {
       `*Message Templates:*\n` +
       `All messages use pre-approved templates. Use /templates to view them.\n\n` +
       `*Need more help?*\n` +
-      `Use /menu to see all available commands.`;
+      `Use /menu to see all available commands.`
+    );
   }
 
   async showTemplates(phoneNumber: string): Promise<string> {
     try {
       const templates = messageTemplateService.getAllTemplates();
-      
+
       let message = `📝 *Message Templates*\n\n`;
       message += `These are the pre-approved templates used for reminders:\n\n`;
 
@@ -77,72 +81,20 @@ export class MenuCommand {
 
       return message;
     } catch (error) {
-      logger.error('Error showing templates:', error);
-      return 'Sorry, there was an error displaying templates.';
+      logger.error("Error showing templates:", error);
+      return "Sorry, there was an error displaying templates.";
     }
   }
 
   async handleReminderTypeCommand(
     phoneNumber: string,
-    reminderType: 'sunset' | 'candle_lighting' | 'prayer',
+    reminderType: string,
     timeInput?: string
   ): Promise<string> {
-    try {
-      const user = await supabaseService.getUserByPhone(phoneNumber);
-      if (!user || user.status !== 'active') {
-        return 'Please complete registration first. Send any message to get started.';
-      }
-
-      if (!timeInput) {
-        // Show current setting or prompt for time
-        if (!user.id) {
-          return 'User ID not found. Please contact support.';
-        }
-        const settings = await supabaseService.getReminderSettings(user.id);
-        const setting = settings.find((s) => s.reminder_type === reminderType);
-        
-        if (setting) {
-          const status = setting.enabled ? 'enabled' : 'disabled';
-          const offsetText = setting.time_offset_minutes === 0
-            ? 'at the time'
-            : setting.time_offset_minutes > 0
-            ? `${setting.time_offset_minutes} minutes after`
-            : `${Math.abs(setting.time_offset_minutes)} minutes before`;
-          
-          return `${this.getReminderTypeName(reminderType)} reminder is currently ${status}.\nTime: ${offsetText}\n\nTo change, use: /${reminderType} [time offset]`;
-        }
-        
-        return `To enable ${this.getReminderTypeName(reminderType)} reminders, specify a time offset.\nExample: /${reminderType} 30 (for 30 minutes before)`;
-      }
-
-      // Parse time offset
-      const offsetMinutes = await settingsCommand.parseTimeOffset(timeInput);
-      if (offsetMinutes === null) {
-        return `Invalid time format. Please use:\n• A number (e.g., "30" for 30 minutes before)\n• "30 minutes before"\n• "15 minutes after"\n• "0" or "at" for at the time`;
-      }
-
-      // Enable the reminder
-      return await settingsCommand.setReminderSetting(
-        phoneNumber,
-        reminderType,
-        true,
-        offsetMinutes
-      );
-    } catch (error) {
-      logger.error('Error handling reminder type command:', error);
-      return 'Sorry, there was an error processing your request.';
-    }
-  }
-
-  private getReminderTypeName(type: 'sunset' | 'candle_lighting' | 'prayer'): string {
-    const names = {
-      sunset: 'Sunset',
-      candle_lighting: 'Candle Lighting',
-      prayer: 'Prayer Times',
-    };
-    return names[type] || type;
+    // Legacy text commands (/sunset, /candles, /prayer) are no longer used.
+    // We now use WhatsApp interactive templates (buttons) for all flows.
+    return "This command is no longer used. Just send any message and use the menu buttons to set your reminders.";
   }
 }
 
 export default new MenuCommand();
-

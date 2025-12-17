@@ -1,45 +1,46 @@
-import supabaseService from '../../services/supabase';
-import settingsCommand from './settings';
-import twilioService from '../../services/twilio';
-import logger from '../../utils/logger';
-import { ReminderType } from '../../types';
+import supabaseService from "../../services/supabase";
+import settingsCommand from "./settings";
+import twilioService from "../../services/twilio";
+import logger from "../../utils/logger";
+import { ReminderType } from "../../types";
 
 export class RemindersCommand {
   async listReminders(phoneNumber: string): Promise<string> {
     try {
       const user = await supabaseService.getUserByPhone(phoneNumber);
       if (!user || !user.id) {
-        return 'Please complete registration first. Send any message to get started.';
+        return "Please complete registration first. Send any message to get started.";
       }
 
       const settings = await supabaseService.getReminderSettings(user.id);
-      
+
       if (settings.length === 0) {
-        return '📭 You don\'t have any reminders yet.\n\nUse /menu to set up reminders.';
+        return "📭 You don't have any reminders yet.\n\nUse /menu to set up reminders.";
       }
 
       // If user has reminders, send a List Picker template with edit buttons
       // Limit to 5 reminders (max items in List Picker template)
       const remindersToShow = settings.slice(0, 5);
-      
+
       // Create list items for the template
       // Each item needs: name, id, description
       // We'll use format: "edit_<reminder_id>" as the ID to identify which reminder to edit
       const listItems = remindersToShow.map((setting) => {
-        const status = setting.enabled ? '✅' : '❌';
-        const offsetText = setting.time_offset_minutes === 0
-          ? 'בזמן'
-          : setting.time_offset_minutes > 0
-          ? `${setting.time_offset_minutes} דקות אחרי`
-          : `${Math.abs(setting.time_offset_minutes)} דקות לפני`;
-        
+        const status = setting.enabled ? "✅" : "❌";
+        const offsetText =
+          setting.time_offset_minutes === 0
+            ? "בזמן"
+            : setting.time_offset_minutes > 0
+            ? `${setting.time_offset_minutes} דקות אחרי`
+            : `${Math.abs(setting.time_offset_minutes)} דקות לפני`;
+
         const typeName = this.formatReminderTypeHebrew(setting.reminder_type);
         const emoji = this.getReminderTypeEmoji(setting.reminder_type);
-        
+
         return {
           name: `${emoji} ${typeName} - ${offsetText}`,
           id: `edit_${setting.id}`,
-          desc: `לחץ לעריכה`
+          desc: `לחץ לעריכה`,
         };
       });
 
@@ -59,35 +60,36 @@ export class RemindersCommand {
       const remainingSlots = 5 - listItems.length;
       for (let i = listItems.length; i < 5; i++) {
         const baseVar = i * 3 + 1;
-        templateVariables[String(baseVar)] = '';
-        templateVariables[String(baseVar + 1)] = '';
-        templateVariables[String(baseVar + 2)] = '';
+        templateVariables[String(baseVar)] = "";
+        templateVariables[String(baseVar + 1)] = "";
+        templateVariables[String(baseVar + 2)] = "";
       }
 
       try {
         // Send the reminders list as a template (reusing time_picker template structure)
         await twilioService.sendTemplateMessage(
           phoneNumber,
-          'timePicker', // Reuse the time_picker template structure
+          "timePicker", // Reuse the time_picker template structure
           templateVariables
         );
-        
-        return ''; // Empty string means we sent a template, not a text message
+
+        return ""; // Empty string means we sent a template, not a text message
       } catch (error) {
-        logger.error('Error sending reminders template:', error);
+        logger.error("Error sending reminders template:", error);
         // Fallback to text message
-        let message = '📋 *Your Reminders:*\n\n';
+        let message = "📋 *Your Reminders:*\n\n";
         settings.forEach((setting, index) => {
-          const status = setting.enabled ? '✅' : '❌';
-          const offsetText = setting.time_offset_minutes === 0
-            ? 'at the time'
-            : setting.time_offset_minutes > 0
-            ? `${setting.time_offset_minutes} min after`
-            : `${Math.abs(setting.time_offset_minutes)} min before`;
-          
+          const status = setting.enabled ? "✅" : "❌";
+          const offsetText =
+            setting.time_offset_minutes === 0
+              ? "at the time"
+              : setting.time_offset_minutes > 0
+              ? `${setting.time_offset_minutes} min after`
+              : `${Math.abs(setting.time_offset_minutes)} min before`;
+
           const typeName = this.formatReminderType(setting.reminder_type);
           const emoji = this.getReminderTypeEmoji(setting.reminder_type);
-          
+
           message += `${index + 1}. ${emoji} *${typeName}*\n`;
           message += `   ${status} ${offsetText}\n`;
           message += `   ID: \`${setting.id}\`\n\n`;
@@ -98,57 +100,64 @@ export class RemindersCommand {
         return message;
       }
     } catch (error) {
-      logger.error('Error listing reminders:', error);
-      return 'Sorry, there was an error retrieving your reminders.';
+      logger.error("Error listing reminders:", error);
+      return "Sorry, there was an error retrieving your reminders.";
     }
   }
 
-  async deleteReminder(phoneNumber: string, reminderId: string): Promise<string> {
+  async deleteReminder(
+    phoneNumber: string,
+    reminderId: string
+  ): Promise<string> {
     try {
       const user = await supabaseService.getUserByPhone(phoneNumber);
       if (!user || !user.id) {
-        return 'Please complete registration first. Send any message to get started.';
+        return "Please complete registration first. Send any message to get started.";
       }
 
       // Verify the reminder belongs to this user
       const allSettings = await supabaseService.getReminderSettings(user.id);
-      const reminderToDelete = allSettings.find(s => s.id === reminderId);
+      const reminderToDelete = allSettings.find((s) => s.id === reminderId);
 
       if (!reminderToDelete) {
-        return '❌ Reminder not found. Use /reminders to see your reminders.';
+        return "❌ Reminder not found. Use /reminders to see your reminders.";
       }
 
       if (reminderToDelete.user_id !== user.id) {
-        return '❌ You can only delete your own reminders.';
+        return "❌ You can only delete your own reminders.";
       }
 
       await supabaseService.deleteReminderSetting(reminderId);
-      
+
       const typeName = this.formatReminderType(reminderToDelete.reminder_type);
       return `✅ Reminder deleted: ${typeName}`;
     } catch (error) {
-      logger.error('Error deleting reminder:', error);
-      return 'Sorry, there was an error deleting the reminder.';
+      logger.error("Error deleting reminder:", error);
+      return "Sorry, there was an error deleting the reminder.";
     }
   }
 
-  async editReminder(phoneNumber: string, reminderId: string, timeInput: string): Promise<string> {
+  async editReminder(
+    phoneNumber: string,
+    reminderId: string,
+    timeInput: string
+  ): Promise<string> {
     try {
       const user = await supabaseService.getUserByPhone(phoneNumber);
       if (!user || !user.id) {
-        return 'Please complete registration first. Send any message to get started.';
+        return "Please complete registration first. Send any message to get started.";
       }
 
       // Find the reminder
       const allSettings = await supabaseService.getReminderSettings(user.id);
-      const reminderToEdit = allSettings.find(s => s.id === reminderId);
+      const reminderToEdit = allSettings.find((s) => s.id === reminderId);
 
       if (!reminderToEdit) {
-        return '❌ Reminder not found. Use /reminders to see your reminders.';
+        return "❌ Reminder not found. Use /reminders to see your reminders.";
       }
 
       if (reminderToEdit.user_id !== user.id) {
-        return '❌ You can only edit your own reminders.';
+        return "❌ You can only edit your own reminders.";
       }
 
       // Parse time offset
@@ -166,46 +175,46 @@ export class RemindersCommand {
       });
 
       const typeName = this.formatReminderType(reminderToEdit.reminder_type);
-      const offsetText = offsetMinutes === 0
-        ? 'at the time'
-        : offsetMinutes > 0
-        ? `${offsetMinutes} minutes after`
-        : `${Math.abs(offsetMinutes)} minutes before`;
+      const offsetText =
+        offsetMinutes === 0
+          ? "at the time"
+          : offsetMinutes > 0
+          ? `${offsetMinutes} minutes after`
+          : `${Math.abs(offsetMinutes)} minutes before`;
 
       return `✅ Reminder updated: ${typeName}\nTime: ${offsetText}`;
     } catch (error) {
-      logger.error('Error editing reminder:', error);
-      return 'Sorry, there was an error updating the reminder.';
+      logger.error("Error editing reminder:", error);
+      return "Sorry, there was an error updating the reminder.";
     }
   }
 
   private formatReminderType(type: ReminderType): string {
     const types: Record<ReminderType, string> = {
-      sunset: 'Sunset',
-      candle_lighting: 'Candle Lighting',
-      prayer: 'Prayer Times',
+      tefillin: "Tefilin",
+      candle_lighting: "Candle Lighting",
+      shema: "Shema Time",
     };
     return types[type] || type;
   }
 
   private getReminderTypeEmoji(type: ReminderType): string {
     const emojis: Record<ReminderType, string> = {
-      sunset: '🌅',
-      candle_lighting: '🕯️',
-      prayer: '🙏',
+      tefillin: "📿",
+      candle_lighting: "🕯️",
+      shema: "📖",
     };
-    return emojis[type] || '⏰';
+    return emojis[type] || "⏰";
   }
 
   private formatReminderTypeHebrew(type: ReminderType): string {
     const types: Record<ReminderType, string> = {
-      sunset: 'זמני שקיעה',
-      candle_lighting: 'הדלקת נרות',
-      prayer: 'זמני תפילה',
+      tefillin: "הנחת תפילין",
+      candle_lighting: "הדלקת נרות",
+      shema: "זמן קריאת שמע",
     };
     return types[type] || type;
   }
 }
 
 export default new RemindersCommand();
-

@@ -1,4 +1,5 @@
-export type ReminderType = 'sunset' | 'candle_lighting' | 'prayer';
+export type ReminderType = "tefillin" | "candle_lighting" | "shema";
+export type Gender = "male" | "female" | "prefer_not_to_say";
 
 export interface User {
   id?: string;
@@ -6,7 +7,8 @@ export interface User {
   registered_at?: string;
   timezone?: string;
   location?: string;
-  status: 'active' | 'inactive' | 'pending';
+  gender?: Gender;
+  status: "active" | "inactive" | "pending";
   created_at?: string;
   updated_at?: string;
 }
@@ -81,4 +83,3 @@ export interface MessageTemplate {
   content: string;
   reminder_type: ReminderType;
 }
-

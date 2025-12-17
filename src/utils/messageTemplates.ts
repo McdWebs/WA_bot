@@ -1,39 +1,44 @@
-import { MessageTemplate, ReminderType } from '../types';
+import { MessageTemplate, ReminderType } from "../types";
 
 export const messageTemplates: MessageTemplate[] = [
   {
-    id: 'sunset_default',
-    name: 'Sunset Reminder',
-    reminder_type: 'sunset',
-    content: '🌅 Reminder: Sunset is at {time} today. Have a blessed evening!',
+    id: "tefillin_default",
+    name: "Tefilin Reminder",
+    reminder_type: "tefillin",
+    content: "📿 תזכורת: הנחת תפילין ב-{time} היום.",
   },
   {
-    id: 'candle_lighting_default',
-    name: 'Candle Lighting Reminder',
-    reminder_type: 'candle_lighting',
-    content: '🕯️ Reminder: Candle lighting time is at {time} today. Shabbat Shalom!',
+    id: "candle_lighting_default",
+    name: "Candle Lighting Reminder",
+    reminder_type: "candle_lighting",
+    content: "🕯️ תזכורת: הדלקת נרות שבת ב-{time} היום. שבת שלום!",
   },
   {
-    id: 'prayer_default',
-    name: 'Prayer Time Reminder',
-    reminder_type: 'prayer',
-    content: '🙏 Reminder: {prayer_name} prayer time is at {time} today.',
+    id: "shema_default",
+    name: "Shema Time Reminder",
+    reminder_type: "shema",
+    content: "📖 תזכורת: זמן קריאת שמע ב-{time} היום.",
   },
 ];
 
 export class MessageTemplateService {
   getTemplate(reminderType: ReminderType): MessageTemplate | null {
-    return messageTemplates.find((t) => t.reminder_type === reminderType) || null;
+    return (
+      messageTemplates.find((t) => t.reminder_type === reminderType) || null
+    );
   }
 
-  formatTemplate(template: MessageTemplate, data: Record<string, string>): string {
+  formatTemplate(
+    template: MessageTemplate,
+    data: Record<string, string>
+  ): string {
     let message = template.content;
-    
+
     // Replace placeholders
     for (const [key, value] of Object.entries(data)) {
-      message = message.replace(new RegExp(`\\{${key}\\}`, 'g'), value);
+      message = message.replace(new RegExp(`\\{${key}\\}`, "g"), value);
     }
-    
+
     return message;
   }
 
@@ -64,4 +69,3 @@ export class MessageTemplateService {
 }
 
 export default new MessageTemplateService();
-
