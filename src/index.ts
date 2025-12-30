@@ -25,13 +25,13 @@ app.get("/webhook/test", (req, res) => {
   });
 });
 
-// Debug endpoint - log all incoming requests
-app.use("/webhook/whatsapp", (req, res, next) => {
+// Debug middleware - parse body first, then log (CRITICAL: body parsing must happen before logging)
+app.post("/webhook/whatsapp", express.urlencoded({ extended: true }), (req, res, next) => {
   logger.info("=== WEBHOOK REQUEST RECEIVED ===");
   logger.info("Method:", req.method);
-  logger.info("Headers:", JSON.stringify(req.headers, null, 2));
+  logger.info("Content-Type:", req.headers["content-type"]);
+  logger.info("Body keys:", Object.keys(req.body || {}));
   logger.info("Body:", JSON.stringify(req.body, null, 2));
-  logger.info("Query:", JSON.stringify(req.query, null, 2));
   logger.info("================================");
   next();
 });
