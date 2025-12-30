@@ -38,6 +38,7 @@ export const config = {
 
   defaultTimezone: process.env.DEFAULT_TIMEZONE || "Asia/Jerusalem",
   logLevel: process.env.LOG_LEVEL || "info",
+  webhookUrl: process.env.WEBHOOK_URL || "",
 };
 
 // Validate required environment variables

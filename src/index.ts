@@ -18,10 +18,17 @@ app.get("/health", (req, res) => {
 
 // Test endpoint to verify webhook is accessible
 app.get("/webhook/test", (req, res) => {
+  const webhookUrl = config.webhookUrl 
+    ? `${config.webhookUrl}/webhook/whatsapp`
+    : "Not configured (set WEBHOOK_URL environment variable)";
+  
   res.status(200).json({
     message: "Webhook endpoint is accessible!",
     timestamp: new Date().toISOString(),
-    webhookUrl: "https://penni-mesne-williemae.ngrok-free.dev/webhook/whatsapp",
+    webhookUrl: webhookUrl,
+    webhookStatusUrl: config.webhookUrl 
+      ? `${config.webhookUrl}/webhook/status`
+      : "Not configured",
   });
 });
 
