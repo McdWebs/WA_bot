@@ -47,13 +47,24 @@ app.post("/webhook/whatsapp", express.urlencoded({ extended: true }), (req, res,
 app.post("/webhook/whatsapp", async (req, res) => {
   // Log that we received a webhook
   logger.info("🔔 WEBHOOK CALLED - Received POST request to /webhook/whatsapp");
-  logger.info("Full request body:", JSON.stringify(req.body, null, 2));
+  logger.info(`Full request body: ${JSON.stringify(req.body, null, 2)}`);
+  logger.info(`Body type: ${typeof req.body}`);
+  logger.info(`Body keys: ${JSON.stringify(Object.keys(req.body || {}))}`);
 
   // Respond to Twilio immediately to avoid timeout
   res.status(200).send("OK");
 
   try {
-    const {
+    // Try different field name variations (Twilio might send different cases)
+    const From = req.body?.From || req.body?.from || req.body?.FROM;
+    const Body = req.body?.Body || req.body?.body || req.body?.BODY;
+    const MessageSid = req.body?.MessageSid || req.body?.messageSid || req.body?.MessageSID;
+    const ButtonText = req.body?.ButtonText || req.body?.buttonText;
+    const ButtonPayload = req.body?.ButtonPayload || req.body?.buttonPayload;
+    const MessageType = req.body?.MessageType || req.body?.messageType;
+    const ListId = req.body?.ListId || req.body?.listId;
+
+    logger.info("Extracted fields:", {
       From,
       Body,
       MessageSid,
@@ -61,29 +72,42 @@ app.post("/webhook/whatsapp", async (req, res) => {
       ButtonPayload,
       MessageType,
       ListId,
-    } = req.body;
-
-    logger.info("Received webhook:", {
-      From,
-      Body,
-      MessageSid,
-      ButtonText,
-      ButtonPayload,
     });
 
     if (!From) {
-      logger.warn("Invalid webhook payload - missing From field:", req.body);
-      // CRITICAL: Even if From is missing, try to send a test response
-      try {
-        const testPhone = req.body?.From || req.body?.from || "unknown";
-        await twilioService.sendMessage(
-          testPhone.replace("whatsapp:", ""),
-          "Test response - webhook received but From field missing"
-        );
-        logger.info("Sent test response for missing From field");
-      } catch (testError) {
-        logger.error("Failed to send test response:", testError);
+      logger.error("❌ CRITICAL: From field is missing from webhook!");
+      logger.error(`Raw req.body: ${JSON.stringify(req.body, null, 2)}`);
+      logger.error(`All body keys: ${JSON.stringify(Object.keys(req.body || {}))}`);
+      
+      // Try to extract phone number from any field that might contain it
+      const possiblePhoneFields = [
+        req.body?.From,
+        req.body?.from,
+        req.body?.FROM,
+        req.body?.WaId,
+        req.body?.waId,
+        req.body?.ProfileName,
+      ];
+      
+      const foundPhone = possiblePhoneFields.find(field => field && (field.includes('+') || field.includes('whatsapp:')));
+      
+      if (foundPhone) {
+        logger.info(`Found phone in alternative field: ${foundPhone}`);
+        const phoneNumber = foundPhone.replace("whatsapp:", "").trim();
+        try {
+          await twilioService.sendMessage(
+            phoneNumber,
+            "✅ Webhook received! Processing your message..."
+          );
+          logger.info(`✅ Sent response using alternative phone field`);
+        } catch (sendError) {
+          logger.error(`Failed to send response:`, sendError);
+        }
+        return;
       }
+      
+      // If still no phone, log error and return
+      logger.error("Could not find phone number in any field");
       return;
     }
 
