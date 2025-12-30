@@ -65,12 +65,33 @@ app.post("/webhook/whatsapp", async (req, res) => {
     });
 
     if (!From) {
-      logger.warn("Invalid webhook payload:", req.body);
+      logger.warn("Invalid webhook payload - missing From field:", req.body);
+      // CRITICAL: Even if From is missing, try to send a test response
+      try {
+        const testPhone = req.body?.From || req.body?.from || "unknown";
+        await twilioService.sendMessage(
+          testPhone.replace("whatsapp:", ""),
+          "Test response - webhook received but From field missing"
+        );
+        logger.info("Sent test response for missing From field");
+      } catch (testError) {
+        logger.error("Failed to send test response:", testError);
+      }
       return;
     }
 
     // Extract phone number (remove 'whatsapp:' prefix if present)
     const phoneNumber = From.replace("whatsapp:", "").trim();
+    
+    // CRITICAL TEST: Send immediate test response to verify Twilio works
+    logger.info(`🧪 TEST: Attempting to send test message to ${phoneNumber}`);
+    try {
+      await twilioService.sendMessage(phoneNumber, "🧪 Test response - webhook received successfully!");
+      logger.info(`✅ TEST: Test message sent successfully to ${phoneNumber}`);
+    } catch (testError: any) {
+      logger.error(`❌ TEST: Failed to send test message:`, testError);
+      logger.error(`❌ TEST: Error code: ${testError?.code}, message: ${testError?.message}`);
+    }
 
     // Handle interactive template button clicks
     // ButtonText, ButtonPayload, ListId (for list picker), or Body can contain the button identifier
