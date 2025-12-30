@@ -52,7 +52,8 @@ app.post("/webhook/whatsapp", async (req, res) => {
   logger.info(`Body keys: ${JSON.stringify(Object.keys(req.body || {}))}`);
 
   // Respond to Twilio immediately to avoid timeout
-  res.status(200).send("OK");
+  // Use plain text response for WhatsApp webhooks (not XML/TwiML)
+  res.status(200).contentType('text/plain').send("OK");
 
   try {
     // Try different field name variations (Twilio might send different cases)
@@ -79,50 +80,57 @@ app.post("/webhook/whatsapp", async (req, res) => {
       logger.error(`Raw req.body: ${JSON.stringify(req.body, null, 2)}`);
       logger.error(`All body keys: ${JSON.stringify(Object.keys(req.body || {}))}`);
       
-      // Try to extract phone number from any field that might contain it
-      const possiblePhoneFields = [
-        req.body?.From,
-        req.body?.from,
-        req.body?.FROM,
-        req.body?.WaId,
-        req.body?.waId,
-        req.body?.ProfileName,
-      ];
+      // Try to extract phone number from Payload if it's a JSON string (Twilio error webhooks)
+      let phoneNumber = null;
+      if (req.body?.Payload) {
+        try {
+          const payload = JSON.parse(req.body.Payload);
+          if (payload?.webhook?.request?.parameters?.From) {
+            phoneNumber = payload.webhook.request.parameters.From.replace("whatsapp:", "").trim();
+            logger.info(`Found phone in Payload From: ${phoneNumber}`);
+          } else if (payload?.webhook?.request?.parameters?.WaId) {
+            phoneNumber = `+${payload.webhook.request.parameters.WaId}`;
+            logger.info(`Found phone in Payload WaId: ${phoneNumber}`);
+          }
+        } catch (e) {
+          logger.error("Failed to parse Payload:", e);
+        }
+      }
       
-      const foundPhone = possiblePhoneFields.find(field => field && (field.includes('+') || field.includes('whatsapp:')));
+      // Try other fields as fallback
+      if (!phoneNumber) {
+        const possiblePhoneFields = [
+          req.body?.WaId,
+          req.body?.waId,
+        ];
+        
+        const foundPhone = possiblePhoneFields.find(field => field && (field.includes('+') || /^\d+$/.test(field)));
+        
+        if (foundPhone) {
+          phoneNumber = foundPhone.includes('+') ? foundPhone : `+${foundPhone}`;
+          logger.info(`Found phone in alternative field: ${phoneNumber}`);
+        }
+      }
       
-      if (foundPhone) {
-        logger.info(`Found phone in alternative field: ${foundPhone}`);
-        const phoneNumber = foundPhone.replace("whatsapp:", "").trim();
+      if (phoneNumber) {
         try {
           await twilioService.sendMessage(
             phoneNumber,
             "✅ Webhook received! Processing your message..."
           );
-          logger.info(`✅ Sent response using alternative phone field`);
+          logger.info(`✅ Sent response using extracted phone number`);
         } catch (sendError) {
           logger.error(`Failed to send response:`, sendError);
         }
-        return;
+      } else {
+        logger.error("Could not find phone number in any field");
       }
       
-      // If still no phone, log error and return
-      logger.error("Could not find phone number in any field");
       return;
     }
 
     // Extract phone number (remove 'whatsapp:' prefix if present)
     const phoneNumber = From.replace("whatsapp:", "").trim();
-    
-    // CRITICAL TEST: Send immediate test response to verify Twilio works
-    logger.info(`🧪 TEST: Attempting to send test message to ${phoneNumber}`);
-    try {
-      await twilioService.sendMessage(phoneNumber, "🧪 Test response - webhook received successfully!");
-      logger.info(`✅ TEST: Test message sent successfully to ${phoneNumber}`);
-    } catch (testError: any) {
-      logger.error(`❌ TEST: Failed to send test message:`, testError);
-      logger.error(`❌ TEST: Error code: ${testError?.code}, message: ${testError?.message}`);
-    }
 
     // Handle interactive template button clicks
     // ButtonText, ButtonPayload, ListId (for list picker), or Body can contain the button identifier
