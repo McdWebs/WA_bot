@@ -42,11 +42,12 @@ export class TwilioService {
     const templateSid = config.templates[templateKey];
 
     try {
-      if (!templateSid) {
-        logger.warn(
-          `Template ${templateKey} not configured, skipping template send`
+      if (!templateSid || templateSid.trim() === "") {
+        const error = new Error(
+          `Template ${templateKey} not configured (SID is empty or missing)`
         );
-        return;
+        logger.error(`Template ${templateKey} not configured, cannot send template`);
+        throw error;
       }
 
       // For WhatsApp templates, use contentSid with contentVariables
@@ -87,17 +88,27 @@ export class TwilioService {
         `Template message sent to ${to}: ${result.sid}, status: ${result.status}`
       );
 
+      // Check for ANY error code, not just 63027
       if (result.errorCode) {
         logger.error(
           `Message error code: ${result.errorCode}, message: ${result.errorMessage}`
         );
-        // If it's error 63027 (template language/locale issue), throw a specific error
-        if (result.errorCode === 63027) {
-          const templateError: any = new Error(`Template language/locale error: ${result.errorMessage}`);
-          templateError.code = 63027;
-          templateError.isTemplateError = true;
-          throw templateError;
-        }
+        const templateError: any = new Error(
+          `Twilio error ${result.errorCode}: ${result.errorMessage}`
+        );
+        templateError.code = result.errorCode;
+        templateError.isTemplateError = true;
+        throw templateError;
+      }
+
+      // Verify message status indicates success
+      if (result.status === 'failed' || result.status === 'undelivered') {
+        logger.error(`Message status indicates failure: ${result.status}`);
+        const statusError: any = new Error(
+          `Message failed with status: ${result.status}`
+        );
+        statusError.isTemplateError = true;
+        throw statusError;
       }
     } catch (error: any) {
       logger.error(`Error sending template message to ${to}:`, error);

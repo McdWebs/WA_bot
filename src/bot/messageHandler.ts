@@ -193,11 +193,10 @@ export class MessageHandler {
 
       logger.info(`Main menu template sent to ${phoneNumber}`);
     } catch (error: any) {
-      // Check if it's a template error (63027) - fallback to plain text
-      if (error.code === 63027 || error.isTemplateError) {
-        logger.warn(
-          `Template error (63027) for ${phoneNumber}, falling back to plain text menu`
-        );
+      logger.error(`Error sending main menu to ${phoneNumber}:`, error);
+      
+      // Always send fallback menu for ANY error
+      try {
         const user = await supabaseService.getUserByPhone(phoneNumber);
         const userGender: Gender = (user?.gender as Gender) || gender;
         let menuText = "איזה תזכורת תרצה?\n\n";
@@ -211,11 +210,10 @@ export class MessageHandler {
         }
 
         await twilioService.sendMessage(phoneNumber, menuText);
-        logger.info(`Plain text menu sent to ${phoneNumber} as fallback`);
-      } else {
-        // Other errors - log and rethrow
-        logger.error(`Error sending main menu to ${phoneNumber}:`, error);
-        throw error;
+        logger.info(`✅ Fallback menu sent to ${phoneNumber}`);
+      } catch (fallbackError) {
+        logger.error(`❌ Failed to send fallback menu to ${phoneNumber}:`, fallbackError);
+        throw fallbackError;
       }
     }
   }

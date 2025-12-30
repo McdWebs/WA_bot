@@ -187,6 +187,17 @@ app.post("/webhook/whatsapp", async (req, res) => {
         logger.info(`Response sent successfully to ${phoneNumber}`);
       } catch (error) {
         logger.error(`Error processing message from ${phoneNumber}:`, error);
+        
+        // Always send fallback message to user
+        try {
+          await twilioService.sendMessage(
+            phoneNumber,
+            "סליחה, אירעה שגיאה. נסה שוב או שלח /menu"
+          );
+          logger.info(`✅ Sent error fallback message to ${phoneNumber}`);
+        } catch (fallbackError) {
+          logger.error(`❌ Failed to send fallback message to ${phoneNumber}:`, fallbackError);
+        }
       }
     })();
   } catch (error) {
