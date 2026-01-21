@@ -114,10 +114,10 @@ app.post("/webhook/whatsapp", async (req, res) => {
       
       if (phoneNumber) {
         try {
-          await twilioService.sendMessage(
-            phoneNumber,
-            "✅ Webhook received! Processing your message..."
-          );
+          // await twilioService.sendMessage(
+          //   phoneNumber,
+          //   "✅ Webhook received! Processing your message..."
+          // );
           logger.info(`✅ Sent response using extracted phone number`);
         } catch (sendError) {
           logger.error(`Failed to send response:`, sendError);
