@@ -1,4 +1,5 @@
-import supabaseService from "../../services/supabase";
+// Database layer: use MongoDB instead of Supabase
+import mongoService from "../../services/mongo";
 import settingsCommand from "./settings";
 import twilioService from "../../services/twilio";
 import logger from "../../utils/logger";
@@ -7,12 +8,12 @@ import { ReminderType } from "../../types";
 export class RemindersCommand {
   async listReminders(phoneNumber: string): Promise<string> {
     try {
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
       if (!user || !user.id) {
         return "Please complete registration first. Send any message to get started.";
       }
 
-      const settings = await supabaseService.getReminderSettings(user.id);
+      const settings = await mongoService.getReminderSettings(user.id);
 
       if (settings.length === 0) {
         return "📭 You don't have any reminders yet.\n\nUse /menu to set up reminders.";
@@ -110,13 +111,13 @@ export class RemindersCommand {
     reminderId: string
   ): Promise<string> {
     try {
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
       if (!user || !user.id) {
         return "Please complete registration first. Send any message to get started.";
       }
 
       // Verify the reminder belongs to this user
-      const allSettings = await supabaseService.getReminderSettings(user.id);
+      const allSettings = await mongoService.getReminderSettings(user.id);
       const reminderToDelete = allSettings.find((s) => s.id === reminderId);
 
       if (!reminderToDelete) {
@@ -127,7 +128,7 @@ export class RemindersCommand {
         return "❌ You can only delete your own reminders.";
       }
 
-      await supabaseService.deleteReminderSetting(reminderId);
+      await mongoService.deleteReminderSetting(reminderId);
 
       const typeName = this.formatReminderType(reminderToDelete.reminder_type);
       return `✅ Reminder deleted: ${typeName}`;
@@ -143,13 +144,13 @@ export class RemindersCommand {
     timeInput: string
   ): Promise<string> {
     try {
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
       if (!user || !user.id) {
         return "Please complete registration first. Send any message to get started.";
       }
 
       // Find the reminder
-      const allSettings = await supabaseService.getReminderSettings(user.id);
+      const allSettings = await mongoService.getReminderSettings(user.id);
       const reminderToEdit = allSettings.find((s) => s.id === reminderId);
 
       if (!reminderToEdit) {
@@ -167,7 +168,7 @@ export class RemindersCommand {
       }
 
       // Update the reminder
-      await supabaseService.upsertReminderSetting({
+      await mongoService.upsertReminderSetting({
         user_id: user.id,
         reminder_type: reminderToEdit.reminder_type,
         enabled: true,

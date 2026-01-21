@@ -1,4 +1,5 @@
-import supabaseService from "../../services/supabase";
+// Database layer: use MongoDB instead of Supabase
+import mongoService from "../../services/mongo";
 import settingsCommand from "./settings";
 import messageTemplateService from "../../utils/messageTemplates";
 import logger from "../../utils/logger";
@@ -6,7 +7,7 @@ import logger from "../../utils/logger";
 export class MenuCommand {
   async showMenu(phoneNumber: string): Promise<string> {
     try {
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
       if (!user || user.status !== "active") {
         return "Please complete registration first. Send any message to get started.";
       }

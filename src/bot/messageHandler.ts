@@ -1,6 +1,7 @@
 import registrationCommand from "./commands/registration";
 import menuCommand from "./commands/menu";
-import supabaseService from "../services/supabase";
+// Database layer: use MongoDB instead of Supabase
+import mongoService from "../services/mongo";
 import hebcalService from "../services/hebcal";
 import twilioService from "../services/twilio";
 import logger from "../utils/logger";
@@ -54,11 +55,11 @@ export class MessageHandler {
       }
 
       // Check if this is a new user
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
 
       if (!user) {
         // Create new user
-        await supabaseService.createUser({
+        await mongoService.createUser({
           phone_number: phoneNumber,
           status: "active",
           timezone: undefined,
@@ -92,7 +93,7 @@ export class MessageHandler {
       case "/menu":
         // Always open the main menu template instead of text menu
         try {
-          const user = await supabaseService.getUserByPhone(phoneNumber);
+          const user = await mongoService.getUserByPhone(phoneNumber);
           const gender: Gender =
             (user?.gender as Gender) || "prefer_not_to_say";
           await this.sendMainMenu(phoneNumber, gender);
@@ -197,7 +198,7 @@ export class MessageHandler {
       
       // Always send fallback menu for ANY error
       try {
-        const user = await supabaseService.getUserByPhone(phoneNumber);
+        const user = await mongoService.getUserByPhone(phoneNumber);
         const userGender: Gender = (user?.gender as Gender) || gender;
         let menuText = "איזה תזכורת תרצה?\n\n";
 
@@ -237,7 +238,7 @@ export class MessageHandler {
       }
 
       // Get user data
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
       if (!user) {
         logger.warn(
           `User ${phoneNumber} not found - cannot handle button click`
@@ -298,7 +299,7 @@ export class MessageHandler {
           gender = "female";
         }
 
-        await supabaseService.updateUser(phoneNumber, {
+        await mongoService.updateUser(phoneNumber, {
           gender,
           status: "active",
         });
@@ -339,7 +340,7 @@ export class MessageHandler {
         // User selected time from time picker
         const editingReminderId = editingReminders.get(phoneNumber);
         const currentReminderType = editingReminderId
-          ? (await supabaseService.getReminderSettings(user.id!)).find(
+          ? (await mongoService.getReminderSettings(user.id!)).find(
               (s) => s.id === editingReminderId
             )?.reminder_type
           : null;
@@ -380,7 +381,7 @@ export class MessageHandler {
         } else if (currentReminderType === "tefillin") {
           // Tefillin flow: save location, then show tefillin time picker
           const city = buttonIdentifier;
-          await supabaseService.updateUser(phoneNumber, { location: city });
+          await mongoService.updateUser(phoneNumber, { location: city });
           logger.info(
             `✅ Saved location "${city}" for tefillin reminder flow for ${phoneNumber}`
           );
@@ -388,7 +389,7 @@ export class MessageHandler {
         } else {
           // Fallback: just update location for user, no specific reminder type
           const city = buttonIdentifier;
-          await supabaseService.updateUser(phoneNumber, { location: city });
+          await mongoService.updateUser(phoneNumber, { location: city });
           logger.info(
             `⚠️ City "${city}" selected without active reminder type for ${phoneNumber} - location updated only`
           );
@@ -633,7 +634,7 @@ export class MessageHandler {
       this.creatingReminderType.set(phoneNumber, "tefillin");
 
       // Determine base location: prefer explicit override, then saved user.location, then inferred city
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
       const baseLocation =
         locationOverride ||
         (user && user.location) ||
@@ -718,7 +719,7 @@ export class MessageHandler {
       this.creatingReminderType.set(phoneNumber, "shema");
 
       // Determine base location: use user's saved location if available, otherwise infer from phone
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
       const baseLocation =
         (user && user.location) ||
         this.inferLocationFromPhoneNumber(phoneNumber);
@@ -757,7 +758,7 @@ export class MessageHandler {
     timeId: string
   ): Promise<void> {
     try {
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
       if (!user || !user.id) {
         throw new Error("User not found");
       }
@@ -772,7 +773,7 @@ export class MessageHandler {
 
       const timeOffsetMinutes = timeOffsetMap[timeId] ?? 0;
 
-      await supabaseService.upsertReminderSetting({
+      await mongoService.upsertReminderSetting({
         user_id: user.id,
         reminder_type: reminderType,
         enabled: true,
@@ -823,18 +824,18 @@ export class MessageHandler {
     city: string | null
   ): Promise<void> {
     try {
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
       if (!user || !user.id) {
         throw new Error("User not found");
       }
 
       // Update user location if city was provided
       if (city) {
-        await supabaseService.updateUser(phoneNumber, { location: city });
+        await mongoService.updateUser(phoneNumber, { location: city });
       }
 
       // Save reminder (no time offset for candle lighting - sent at 8:00 AM on Friday)
-      await supabaseService.upsertReminderSetting({
+      await mongoService.upsertReminderSetting({
         user_id: user.id,
         reminder_type: "candle_lighting",
         enabled: true,
@@ -880,7 +881,7 @@ export class MessageHandler {
     reminderType: ReminderType
   ): Promise<void> {
     try {
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
       if (!user || !user.id) {
         throw new Error("User not found");
       }
@@ -895,7 +896,7 @@ export class MessageHandler {
 
       const timeOffsetMinutes = timeOffsetMap[timeId] ?? 0;
 
-      await supabaseService.upsertReminderSetting({
+      await mongoService.upsertReminderSetting({
         user_id: user.id,
         reminder_type: reminderType,
         enabled: true,

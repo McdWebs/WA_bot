@@ -6,6 +6,10 @@ export const config = {
   port: parseInt(process.env.PORT || "3000", 10),
   nodeEnv: process.env.NODE_ENV || "development",
 
+  /**
+   * @deprecated Supabase configuration is deprecated in favor of MongoDB (MONGODB_URI).
+   * This is kept for backward compatibility and should not be used in new code.
+   */
   supabase: {
     url: process.env.SUPABASE_URL!,
     anonKey: process.env.SUPABASE_ANON_KEY!,
@@ -43,12 +47,14 @@ export const config = {
 
 // Validate required environment variables
 const requiredVars = [
-  "SUPABASE_URL",
-  "SUPABASE_ANON_KEY",
-  "SUPABASE_SERVICE_ROLE_KEY",
+  // Supabase vars are deprecated but kept optional for now, so we don't enforce them
+  // "SUPABASE_URL",
+  // "SUPABASE_ANON_KEY",
+  // "SUPABASE_SERVICE_ROLE_KEY",
   "TWILIO_ACCOUNT_SID",
   "TWILIO_AUTH_TOKEN",
   "TWILIO_WHATSAPP_FROM",
+  "MONGODB_URI",
 ];
 
 for (const varName of requiredVars) {

@@ -1,5 +1,6 @@
 import cron from "node-cron";
-import supabaseService from "../services/supabase";
+// Database layer: use MongoDB instead of Supabase
+import mongoService from "../services/mongo";
 import hebcalService from "../services/hebcal";
 import twilioService from "../services/twilio";
 import timezoneService from "../utils/timezone";
@@ -28,7 +29,7 @@ export class ReminderScheduler {
   private async checkAndSendReminders(): Promise<void> {
     try {
       // Get all active reminder settings with user data
-      const settings = await supabaseService.getAllActiveReminderSettings();
+      const settings = await mongoService.getAllActiveReminderSettings();
 
       if (settings.length === 0) {
         return;
@@ -110,7 +111,7 @@ export class ReminderScheduler {
               );
 
               // Update user's location in database to fix it for future
-              await supabaseService.updateUser(user.phone_number, {
+              await mongoService.updateUser(user.phone_number, {
                 location: fallback,
               });
               break;

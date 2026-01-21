@@ -1,16 +1,17 @@
-import supabaseService from "../../services/supabase";
+// Database layer: use MongoDB instead of Supabase
+import mongoService from "../../services/mongo";
 import logger from "../../utils/logger";
 import { ReminderType, ReminderSetting } from "../../types";
 
 export class SettingsCommand {
   async getReminderSettings(phoneNumber: string): Promise<string> {
     try {
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
       if (!user || !user.id) {
         return "Please complete registration first. Send any message to get started.";
       }
 
-      const settings = await supabaseService.getReminderSettings(user.id);
+      const settings = await mongoService.getReminderSettings(user.id);
 
       if (settings.length === 0) {
         return "You don't have any reminder settings yet. Use /menu to set up reminders.";
@@ -47,7 +48,7 @@ export class SettingsCommand {
     offsetMinutes: number = 0
   ): Promise<string> {
     try {
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
       if (!user || !user.id) {
         return "Please complete registration first. Send any message to get started.";
       }
@@ -60,7 +61,7 @@ export class SettingsCommand {
           time_offset_minutes: offsetMinutes,
         };
 
-      await supabaseService.upsertReminderSetting(setting);
+      await mongoService.upsertReminderSetting(setting);
 
       const status = enabled ? "enabled" : "disabled";
       const offsetText =

@@ -53,7 +53,7 @@ app.post("/webhook/whatsapp", async (req, res) => {
 
   // Respond to Twilio immediately to avoid timeout
   // Use plain text response for WhatsApp webhooks (not XML/TwiML)
-  res.status(200).contentType('text/plain').send("OK");
+  // res.status(200).contentType('text/plain').send("OK");
 
   try {
     // Try different field name variations (Twilio might send different cases)
@@ -278,7 +278,7 @@ app.post("/webhook/status", async (req, res) => {
     });
 
     // Respond to Twilio
-    res.status(200).send("OK");
+    // res.status(200).send("OK");
   } catch (error) {
     logger.error("Error handling status callback:", error);
     res.status(500).send("Internal server error");

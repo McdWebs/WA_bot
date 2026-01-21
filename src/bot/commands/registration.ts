@@ -1,4 +1,5 @@
-import supabaseService from "../../services/supabase";
+// Database layer: use MongoDB instead of Supabase
+import mongoService from "../../services/mongo";
 import twilioService from "../../services/twilio";
 import timezoneService from "../../utils/timezone";
 import logger from "../../utils/logger";
@@ -11,7 +12,7 @@ export class RegistrationCommand {
   ): Promise<string> {
     try {
       // Check if user already exists
-      const existingUser = await supabaseService.getUserByPhone(phoneNumber);
+      const existingUser = await mongoService.getUserByPhone(phoneNumber);
 
       if (existingUser) {
         if (existingUser.status === "pending") {
@@ -31,7 +32,7 @@ export class RegistrationCommand {
         location: undefined,
       };
 
-      await supabaseService.createUser(newUser);
+      await mongoService.createUser(newUser);
 
       return 'Welcome to the Reminders Bot! 🌟\n\nTo get started, please tell me your location (city name, e.g., "Jerusalem" or "New York"). This helps us set your timezone correctly.';
     } catch (error) {
@@ -58,7 +59,7 @@ export class RegistrationCommand {
       );
 
       // Update user with location and timezone
-      await supabaseService.updateUser(user.phone_number, {
+      await mongoService.updateUser(user.phone_number, {
         location,
         timezone,
         status: "active",
@@ -72,7 +73,7 @@ export class RegistrationCommand {
 
   async isRegistrationInProgress(phoneNumber: string): Promise<boolean> {
     try {
-      const user = await supabaseService.getUserByPhone(phoneNumber);
+      const user = await mongoService.getUserByPhone(phoneNumber);
       return user?.status === "pending" || false;
     } catch (error) {
       logger.error("Error checking registration status:", error);

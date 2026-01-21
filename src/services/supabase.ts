@@ -1,3 +1,9 @@
+/**
+ * @deprecated
+ * SupabaseService is deprecated in favor of MongoService (see src/services/mongo.ts).
+ * This file is kept for reference and backward compatibility, but should not be used
+ * in new code. All database operations now go through MongoDB.
+ */
 import { createClient } from "@supabase/supabase-js";
 import { config } from "../config";
 import { User, ReminderSetting } from "../types";
