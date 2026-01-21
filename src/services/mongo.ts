@@ -50,8 +50,15 @@ export class MongoService {
   async getUserByPhone(phoneNumber: string): Promise<User | null> {
     try {
       const users = await getUsersCollection();
-      const user = await users.findOne({ phone_number: phoneNumber });
-      return user || null;
+      const result = await users.findOne({ phone_number: phoneNumber });
+      if (!result) return null;
+
+      // Normalize Mongo document → User shape with string `id`
+      const u: any = result;
+      return {
+        ...u,
+        id: u.id || u._id?.toString(),
+      };
     } catch (error) {
       logger.error("Error fetching user by phone (Mongo):", error);
       throw error;

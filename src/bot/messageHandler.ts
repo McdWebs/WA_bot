@@ -758,8 +758,18 @@ export class MessageHandler {
     timeId: string
   ): Promise<void> {
     try {
-      const user = await mongoService.getUserByPhone(phoneNumber);
-      if (!user || !user.id) {
+      // Ensure user exists – create if missing (e.g. user came in via templates only)
+      let user = await mongoService.getUserByPhone(phoneNumber);
+      if (!user) {
+        user = await mongoService.createUser({
+          phone_number: phoneNumber,
+          status: "active",
+          timezone: undefined,
+          location: undefined,
+          gender: undefined,
+        });
+      }
+      if (!user.id) {
         throw new Error("User not found");
       }
 
@@ -824,8 +834,18 @@ export class MessageHandler {
     city: string | null
   ): Promise<void> {
     try {
-      const user = await mongoService.getUserByPhone(phoneNumber);
-      if (!user || !user.id) {
+      // Ensure user exists – create if missing
+      let user = await mongoService.getUserByPhone(phoneNumber);
+      if (!user) {
+        user = await mongoService.createUser({
+          phone_number: phoneNumber,
+          status: "active",
+          timezone: undefined,
+          location: undefined,
+          gender: undefined,
+        });
+      }
+      if (!user.id) {
         throw new Error("User not found");
       }
 
@@ -881,8 +901,18 @@ export class MessageHandler {
     reminderType: ReminderType
   ): Promise<void> {
     try {
-      const user = await mongoService.getUserByPhone(phoneNumber);
-      if (!user || !user.id) {
+      // Ensure user exists – create if missing
+      let user = await mongoService.getUserByPhone(phoneNumber);
+      if (!user) {
+        user = await mongoService.createUser({
+          phone_number: phoneNumber,
+          status: "active",
+          timezone: undefined,
+          location: undefined,
+          gender: undefined,
+        });
+      }
+      if (!user.id) {
         throw new Error("User not found");
       }
 
