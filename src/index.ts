@@ -43,6 +43,13 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
   const processStartTime = Date.now();
   
   try {
+    // Check if this is a status callback (not a message)
+    // Status callbacks have MessageStatus but no From field
+    if (reqBody?.MessageStatus && !reqBody?.From && !reqBody?.from && !reqBody?.FROM) {
+      logger.debug("Status callback received, skipping message processing");
+      return;
+    }
+
     // Extract fields (case-insensitive)
     const From = reqBody?.From || reqBody?.from || reqBody?.FROM;
     const Body = reqBody?.Body || reqBody?.body || reqBody?.BODY || "";
@@ -53,6 +60,7 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
 
     if (!From) {
       logger.error("❌ CRITICAL: From field is missing from webhook!");
+      logger.debug("Webhook body:", JSON.stringify(reqBody, null, 2));
       return;
     }
 
@@ -150,26 +158,26 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
       logger.info(`💬 Processing text message from ${phoneNumber}: "${messageBody.substring(0, 50)}"`);
       const response = await messageHandler.handleIncomingMessage(phoneNumber, messageBody);
       
-      if (response && response.trim() !== "") {
-        await twilioService.sendMessage(phoneNumber, response);
-      }
-    }
+          if (response && response.trim() !== "") {
+            await twilioService.sendMessage(phoneNumber, response);
+          }
+        }
 
     const totalProcessTime = Date.now() - processStartTime;
     const templateSendTime = Date.now() - templateSendStartTime;
     logger.info(`✅ Message processed in ${totalProcessTime}ms (template send: ${templateSendTime}ms) for ${phoneNumber}`);
-  } catch (error) {
+      } catch (error) {
     logger.error(`❌ Error processing WhatsApp message:`, error);
-    
+        
     // Try to send error message to user if we have phone number
-    try {
+        try {
       const From = reqBody?.From || reqBody?.from || reqBody?.FROM;
       if (From) {
         const phoneNumber = From.replace("whatsapp:", "").trim();
-        await twilioService.sendMessage(
-          phoneNumber,
-          "סליחה, אירעה שגיאה. נסה שוב או שלח /menu"
-        );
+          await twilioService.sendMessage(
+            phoneNumber,
+            "סליחה, אירעה שגיאה. נסה שוב או שלח /menu"
+          );
       }
     } catch (fallbackError) {
       logger.error(`❌ Failed to send error fallback:`, fallbackError);
