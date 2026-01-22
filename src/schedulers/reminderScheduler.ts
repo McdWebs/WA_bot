@@ -104,7 +104,7 @@ export class ReminderScheduler {
       if (error?.message?.includes("ENOTFOUND") || error?.message?.includes("getaddrinfo")) {
         logger.debug(`MongoDB connection issue (likely temporary): ${error.message}`);
       } else {
-        logger.error("Error checking reminders:", error);
+      logger.error("Error checking reminders:", error);
       }
     }
   }

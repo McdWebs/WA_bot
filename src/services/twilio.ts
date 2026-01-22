@@ -32,13 +32,18 @@ export class TwilioService {
       | "welcome"
       | "timePicker"
       | "complete"
+      | "completeV2"
       | "genderQuestion"
       | "mainMenu"
+      | "mainMenuV2"
       | "tefillinTimePicker"
+      | "tefillinTimePickerV2"
       | "cityPicker"
       | "shemaTimePicker"
       | "reminderList"
-      | "manageReminders",
+      | "manageReminders"
+      | "manageRemindersV2"
+      | "candleLightingTimePicker",
     parameters?: Record<string, string>
   ): Promise<void> {
     const templateSid = config.templates[templateKey];

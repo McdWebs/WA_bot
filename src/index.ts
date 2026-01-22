@@ -86,7 +86,7 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
       }
       
       logger.info(`🔘 Interactive/Button message detected: buttonIdentifier="${buttonIdentifier}" for ${phoneNumber}`);
-    } else {
+      } else {
       logger.info(`📝 Text message detected: "${Body.substring(0, 50)}" for ${phoneNumber}`);
     }
 
@@ -129,7 +129,7 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
       // Other button clicks - process normally (may need DB)
       logger.info(`🔘 Processing button click: "${buttonIdentifier}" from ${phoneNumber}`);
       await messageHandler.handleInteractiveButton(phoneNumber, buttonIdentifier);
-    } else {
+        } else {
       // Regular text message - check if it's a new user (send template immediately)
       // Use cache to check user quickly without DB query
       const user = await mongoService.getUserByPhone(phoneNumber);
@@ -157,7 +157,7 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
       // Existing user - process normally
       logger.info(`💬 Processing text message from ${phoneNumber}: "${messageBody.substring(0, 50)}"`);
       const response = await messageHandler.handleIncomingMessage(phoneNumber, messageBody);
-      
+
           if (response && response.trim() !== "") {
             await twilioService.sendMessage(phoneNumber, response);
           }

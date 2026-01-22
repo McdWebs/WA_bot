@@ -46,7 +46,7 @@ export class RemindersCommand {
           timeText = `${Math.abs(minutes)} דקות לפני סוף זמן`;
         } else {
           timeText = `${minutes} דקות אחרי סוף זמן`;
-        }
+      }
 
         message += `${listNumber}️⃣ ${typeNameHeb} – ${timeText}\n`;
 
@@ -63,7 +63,7 @@ export class RemindersCommand {
       message += `➕ *תזכורת חדשה* - להוספת תזכורת\n`;
       message += `🔙 *חזרה* - חזרה לתפריט הראשי`;
 
-      return message;
+        return message;
     } catch (error) {
       logger.error("Error listing reminders:", error);
       return "סליחה, אירעה שגיאה בטעינת התזכורות. נסה שוב מאוחר יותר.";

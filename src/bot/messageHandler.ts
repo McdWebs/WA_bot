@@ -256,7 +256,7 @@ export class MessageHandler {
       // based on the button the user clicks
       await twilioService.sendTemplateMessage(
         phoneNumber,
-        "mainMenu"
+        "mainMenuV2"
         // No variables - Quick Reply templates have static button text
       );
 
@@ -293,7 +293,7 @@ export class MessageHandler {
   private async sendManageRemindersMenu(phoneNumber: string): Promise<void> {
     try {
       logger.debug(`Sending manage reminders menu to ${phoneNumber}`);
-      await twilioService.sendTemplateMessage(phoneNumber, "manageReminders");
+      await twilioService.sendTemplateMessage(phoneNumber, "manageRemindersV2");
       logger.debug(`Manage reminders menu sent to ${phoneNumber}`);
     } catch (error) {
       logger.error(
@@ -382,6 +382,9 @@ export class MessageHandler {
         normalizedButton === "30" ||
         normalizedButton === "45" ||
         normalizedButton === "60" ||
+        normalizedButton === "morning" ||
+        normalizedButton === "one_hour" ||
+        normalizedButton === "two_hours" ||
         normalizedButton === "10" ||
         normalizedButton === "20" ||
         cleanButton === "30" ||
@@ -459,7 +462,7 @@ export class MessageHandler {
         } else if (normalizedButton === "close_menu") {
           await twilioService.sendMessage(
             phoneNumber,
-            "תפריט ניהול התזכורות נסגר. אפשר תמיד לפתוח מחדש דרך /menu."
+            "תפריט נסגר. אני כאן בשבילך! פשוט שלח לי הודעה ואני אעזור לך 😊"
           );
         }
       } else if (isEditReminderButton) {
@@ -531,39 +534,64 @@ export class MessageHandler {
             `⏰ Time picker selection detected: button="${buttonIdentifier}", normalized="${normalizedButton}", creatingReminderType="${creatingReminderType}" for ${phoneNumber}`
           );
           if (creatingReminderType) {
-            // Extract time ID from button - try normalized first, then clean, then extract number
-            let timeId = normalizedButton;
-            if (!/^(10|20|30|45|60)$/.test(timeId)) {
-              timeId = cleanButton;
-            }
-            if (!/^(10|20|30|45|60)$/.test(timeId)) {
-              // Try to extract number from button identifier
-              const numberMatch = buttonIdentifier.match(/\b(10|20|30|45|60)\b/);
-              if (numberMatch) {
-                timeId = numberMatch[1];
+            // Handle candle lighting time picker buttons
+            if (creatingReminderType === "candle_lighting") {
+              const timeOption = normalizedButton === "morning" || normalizedButton === "one_hour" || normalizedButton === "two_hours"
+                ? normalizedButton
+                : (cleanButton === "morning" || cleanButton === "one_hour" || cleanButton === "two_hours" ? cleanButton : null);
+              
+              if (timeOption) {
+                // Get user's saved city from location
+                const user = await mongoService.getUserByPhone(phoneNumber);
+                const city = user?.location || null;
+                
+                // Send loading message for better UX
+                await twilioService.sendMessage(phoneNumber, "⏳ שומר את התזכורת...");
+                await this.saveCandleLightingReminder(phoneNumber, city, timeOption);
+              } else {
+                logger.error(
+                  `❌ Invalid candle lighting time option: "${buttonIdentifier}" for ${phoneNumber}`
+                );
+                await twilioService.sendMessage(
+                  phoneNumber,
+                  "❌ שגיאה: לא זוהה זמן תקין. אנא נסה שוב."
+                );
               }
-            }
-            
-            logger.info(
-              `💾 Extracted timeId: "${timeId}" from button="${buttonIdentifier}" for ${phoneNumber}`
-            );
-            
-            if (/^(10|20|30|45|60)$/.test(timeId)) {
-              // Send loading message for better UX
-              await twilioService.sendMessage(phoneNumber, "⏳ שומר את התזכורת...");
-              await this.saveReminderFromTimePicker(
-                phoneNumber,
-                creatingReminderType,
-                timeId
-              );
             } else {
-              logger.error(
-                `❌ Invalid timeId extracted: "${timeId}" from button="${buttonIdentifier}" for ${phoneNumber}`
+              // Extract time ID from button - try normalized first, then clean, then extract number
+              let timeId = normalizedButton;
+              if (!/^(10|20|30|45|60)$/.test(timeId)) {
+                timeId = cleanButton;
+              }
+              if (!/^(10|20|30|45|60)$/.test(timeId)) {
+                // Try to extract number from button identifier
+                const numberMatch = buttonIdentifier.match(/\b(10|20|30|45|60)\b/);
+                if (numberMatch) {
+                  timeId = numberMatch[1];
+                }
+              }
+              
+              logger.info(
+                `💾 Extracted timeId: "${timeId}" from button="${buttonIdentifier}" for ${phoneNumber}`
               );
-              await twilioService.sendMessage(
-                phoneNumber,
-                "❌ שגיאה: לא זוהה זמן תקין. אנא נסה שוב."
-              );
+              
+              if (/^(10|20|30|45|60)$/.test(timeId)) {
+                // Send loading message for better UX
+                await twilioService.sendMessage(phoneNumber, "⏳ שומר את התזכורת...");
+                await this.saveReminderFromTimePicker(
+                  phoneNumber,
+                  creatingReminderType,
+                  timeId
+                );
+              } else {
+                logger.error(
+                  `❌ Invalid timeId extracted: "${timeId}" from button="${buttonIdentifier}" for ${phoneNumber}`
+                );
+                await twilioService.sendMessage(
+                  phoneNumber,
+                  "❌ שגיאה: לא זוהה זמן תקין. אנא נסה שוב."
+                );
+              }
             }
           } else {
             logger.warn(
@@ -580,8 +608,13 @@ export class MessageHandler {
         const currentReminderType = this.getCreatingReminderType(phoneNumber);
 
         if (currentReminderType === "candle_lighting") {
-          // Candle lighting flow: save reminder + location
-          await this.saveCandleLightingReminder(phoneNumber, buttonIdentifier);
+          // Candle lighting flow: save city, then show time picker
+          const city = buttonIdentifier;
+          await mongoService.updateUser(phoneNumber, { location: city });
+          logger.info(
+            `✅ Saved location "${city}" for candle lighting reminder flow for ${phoneNumber}`
+          );
+          await this.sendCandleLightingTimePicker(phoneNumber);
         } else if (currentReminderType === "tefillin") {
           // Tefillin flow: save location, then show tefillin time picker
           const city = buttonIdentifier;
@@ -840,22 +873,34 @@ export class MessageHandler {
         (user && user.location) ||
         this.inferLocationFromPhoneNumber(phoneNumber);
 
+      logger.info(
+        `📍 Tefilin time picker - Location determined: "${baseLocation}" for ${phoneNumber}`
+      );
+
       // Get sunset time for that location from Hebcal
       const sunsetData = await hebcalService.getSunsetData(baseLocation);
       const sunsetTime = sunsetData?.sunset || "18:00";
 
-      // For tefilintimepicker_v3 we only need one variable: {{1}} = sunsetTime
+      logger.info(
+        `⏰ Tefilin time picker - Sunset time retrieved: "${sunsetTime}" for location "${baseLocation}"`
+      );
+
+      // For copy_tefilintimepicker we need variable {{2}} = sunsetTime
       const templateVariables: Record<string, string> = {
-        "1": sunsetTime,
+        "2": sunsetTime,
       };
+
+      logger.info(
+        `📤 Sending tefillin time picker template with variable {{2}} = "${sunsetTime}" to ${phoneNumber}`
+      );
 
       await twilioService.sendTemplateMessage(
         phoneNumber,
-        "tefillinTimePicker",
+        "tefillinTimePickerV2",
         templateVariables
       );
-      logger.debug(
-        `Tefilin time picker sent to ${phoneNumber} with sunset ${sunsetTime}`
+      logger.info(
+        `✅ Tefilin time picker sent to ${phoneNumber} with sunset ${sunsetTime} for location ${baseLocation}`
       );
     } catch (error) {
       logger.error(
@@ -906,6 +951,30 @@ export class MessageHandler {
       await twilioService.sendMessage(
         phoneNumber,
         "איזה עיר אתה?\n\n1. ירושלים\n2. באר שבע\n3. תל אביב\n4. אילת\n5. חיפה"
+      );
+    }
+  }
+
+  /**
+   * Sends time picker for candle lighting reminder
+   */
+  private async sendCandleLightingTimePicker(phoneNumber: string): Promise<void> {
+    try {
+      logger.debug(`Sending candle lighting time picker to ${phoneNumber}`);
+      await twilioService.sendTemplateMessage(
+        phoneNumber,
+        "candleLightingTimePicker"
+      );
+      logger.debug(`Candle lighting time picker sent to ${phoneNumber}`);
+    } catch (error) {
+      logger.error(
+        `Error sending candle lighting time picker to ${phoneNumber}:`,
+        error
+      );
+      // Fallback
+      await twilioService.sendMessage(
+        phoneNumber,
+        "מתי לתזכר אותך?\n\n1. 8:00\n2. שעה לפני שבת\n3. שעתיים לפני שבת"
       );
     }
   }
@@ -1021,12 +1090,8 @@ export class MessageHandler {
         "60": "שעה לפני",
       };
 
-      await twilioService.sendMessage(
-        phoneNumber,
-        `✅ התזכורת הוגדרה בהצלחה!\n\n📌 סוג: ${
-          typeNames[reminderType]
-        }\n⏰ זמן: ${timeDescriptions[timeId] || timeId}`
-      );
+      // Send completion template
+      await twilioService.sendTemplateMessage(phoneNumber, "completeV2");
 
       logger.info(
         `✅ Reminder saved: ${reminderType} with offset ${timeOffsetMinutes} minutes for ${phoneNumber}`
@@ -1041,11 +1106,43 @@ export class MessageHandler {
   }
 
   /**
-   * Saves candle lighting reminder with location
+   * Converts English city name to Hebrew
+   */
+  private getCityNameInHebrew(city: string | null): string {
+    if (!city) return "לא צוין";
+    
+    const cityMap: Record<string, string> = {
+      "Jerusalem": "ירושלים",
+      "Beer Sheva": "באר שבע",
+      "Tel Aviv": "תל אביב",
+      "Eilat": "אילת",
+      "Haifa": "חיפה",
+    };
+
+    // Check exact match first
+    if (cityMap[city]) {
+      return cityMap[city];
+    }
+
+    // Check case-insensitive match
+    const normalizedCity = city.trim();
+    for (const [en, he] of Object.entries(cityMap)) {
+      if (en.toLowerCase() === normalizedCity.toLowerCase()) {
+        return he;
+      }
+    }
+
+    // If already in Hebrew or unknown, return as is
+    return city;
+  }
+
+  /**
+   * Saves candle lighting reminder with location and time option
    */
   private async saveCandleLightingReminder(
     phoneNumber: string,
-    city: string | null
+    city: string | null,
+    timeOption?: string
   ): Promise<void> {
     try {
       // Ensure user exists – create if missing
@@ -1068,20 +1165,29 @@ export class MessageHandler {
         await mongoService.updateUser(phoneNumber, { location: city });
       }
 
-      // Save reminder (no time offset for candle lighting - sent at 8:00 AM on Friday)
+      // Map time option to offset minutes
+      // morning = 8:00 AM (0 offset, special handling in scheduler)
+      // one_hour = 1 hour before Shabbat (-60 minutes)
+      // two_hours = 2 hours before Shabbat (-120 minutes)
+      const timeOffsetMap: Record<string, number> = {
+        morning: 0,
+        one_hour: -60,
+        two_hours: -120,
+      };
+      const timeOffsetMinutes = timeOption ? (timeOffsetMap[timeOption] ?? 0) : 0;
+
+      // Save reminder
       await mongoService.upsertReminderSetting({
         user_id: user.id,
         reminder_type: "candle_lighting",
         enabled: true,
-        time_offset_minutes: 0, // Special handling in scheduler
+        time_offset_minutes: timeOffsetMinutes,
       });
 
       this.creatingReminderType.delete(phoneNumber);
 
-      await twilioService.sendMessage(
-        phoneNumber,
-        `✅ התזכורת הוגדרה בהצלחה!\n\n📌 סוג: הדלקת נרות שבת\n📍 עיר: ${city}\n\nתזכורת תשלח כל יום שישי ב-8:00 בבוקר.`
-      );
+      // Send completion template
+      await twilioService.sendTemplateMessage(phoneNumber, "completeV2");
 
       logger.info(
         `✅ Candle lighting reminder saved for ${phoneNumber} with city: ${city}`
