@@ -4,6 +4,7 @@ import messageHandler from "./bot/messageHandler";
 import reminderScheduler from "./schedulers/reminderScheduler";
 import twilioService from "./services/twilio";
 import logger from "./utils/logger";
+import reminderStateManager, { ReminderStateMode } from "./services/reminderStateManager";
 
 const app = express();
 
@@ -200,6 +201,13 @@ app.post("/webhook/whatsapp", async (req, res) => {
         const isButtonClick =
           isExplicitButtonClick || isSimpleNumberClick || isTwilioEcho;
 
+        // Check if user is in CHOOSE_REMINDER state - if so, treat numeric input as text (reminder selection)
+        const userState = reminderStateManager.getState(phoneNumber);
+        const isInReminderSelectionMode = userState?.mode === ReminderStateMode.CHOOSE_REMINDER;
+        
+        // If user is selecting a reminder by number, treat it as regular text message
+        const shouldTreatAsText = isInReminderSelectionMode && isSimpleNumberClick;
+
         logger.info(`📥 Message analysis:`, {
           hasButtonText: !!ButtonText,
           hasButtonPayload: !!ButtonPayload,
@@ -208,9 +216,11 @@ app.post("/webhook/whatsapp", async (req, res) => {
           isSimpleNumber: isSimpleNumberClick,
           isButtonClick: isButtonClick,
           buttonIdentifier: buttonIdentifier,
+          userState: userState?.mode,
+          shouldTreatAsText: shouldTreatAsText,
         });
 
-        if (isButtonClick && buttonIdentifier) {
+        if (isButtonClick && buttonIdentifier && !shouldTreatAsText) {
           logger.info(
             `🔘 Detected button click: "${buttonIdentifier}" (ButtonText: ${ButtonText}, ButtonPayload: ${ButtonPayload}, Body: "${messageBody}")`
           );
@@ -219,9 +229,9 @@ app.post("/webhook/whatsapp", async (req, res) => {
             buttonIdentifier
           );
         } else {
-          // Handle regular message
+          // Handle regular message (or reminder selection in CHOOSE_REMINDER mode)
           logger.info(
-            `💬 Handling as regular message (not a button click): "${messageBody}"`
+            `💬 Handling as regular message${shouldTreatAsText ? ' (reminder selection mode)' : ''}: "${messageBody}"`
           );
           const response = await messageHandler.handleIncomingMessage(
             phoneNumber,

@@ -14,30 +14,11 @@ export class MenuCommand {
 
       return (
         `📱 *Reminders Bot Menu*\n\n` +
-        `Available Reminder Types:\n\n` +
-        `1️⃣ *Sunset Times* 🌅\n` +
-        `   Get reminders for sunset times\n` +
-        `   Command: /sunset [time offset]\n\n` +
-        `2️⃣ *Candle Lighting* 🕯️\n` +
-        `   Get reminders for Shabbat/Holiday candle lighting\n` +
-        `   Command: /candles [time offset]\n\n` +
-        `3️⃣ *Prayer Times* 🙏\n` +
-        `   Get reminders for prayer times\n` +
-        `   Command: /prayer [time offset]\n\n` +
-        `Reminder Management:\n` +
-        `📋 /reminders - View all your reminders\n` +
-        `✏️ /edit <id> <time> - Edit a reminder\n` +
-        `🗑️ /delete <id> - Delete a reminder\n\n` +
-        `Other Commands:\n` +
-        `⚙️ /settings - View your current settings\n` +
-        `❓ /help - Get help and guidance\n` +
-        `📝 /templates - View message templates\n\n` +
-        `*Examples:*\n` +
-        `• /sunset 30 (30 minutes before sunset)\n` +
-        `• /candles 15 (15 minutes before candle lighting)\n` +
-        `• /prayer 0 (at prayer time)\n` +
-        `• /reminders (view all reminders)\n` +
-        `• /edit <id> 45 (edit reminder to 45 min before)`
+        `הבוט עובד עם תפריטים וכפתורים בלבד.\n` +
+        `פשוט שלח/י הודעה וקבל/י תפריט שבו אפשר:\n\n` +
+        `• להגדיר תזכורות חדשות (תפילין / הדלקת נרות / זמן קריאת שמע)\n` +
+        `• לבחור עיר ותזמון לפני הזמן\n` +
+        `• לראות ולנהל את כל התזכורות דרך תפריט *ניהול התזכורות*`
       );
     } catch (error) {
       logger.error("Error showing menu:", error);
@@ -49,20 +30,11 @@ export class MenuCommand {
     return (
       `❓ *Help & Guidance*\n\n` +
       `*How to use the bot:*\n\n` +
-      `1. Complete registration by providing your location\n` +
-      `2. Choose reminder types from the menu\n` +
-      `3. Set time offsets (e.g., "30 minutes before")\n` +
-      `4. Receive automated reminders at your chosen times\n\n` +
-      `*Setting Reminders:*\n` +
-      `• Use /sunset, /candles, or /prayer followed by time offset\n` +
-      `• Examples:\n` +
-      `  - "/sunset 30" = 30 minutes before sunset\n` +
-      `  - "/candles 0" = at candle lighting time\n` +
-      `  - "/prayer 15" = 15 minutes before prayer\n\n` +
-      `*Message Templates:*\n` +
-      `All messages use pre-approved templates. Use /templates to view them.\n\n` +
-      `*Need more help?*\n` +
-      `Use /menu to see all available commands.`
+      `1. שלח/י כל הודעה כדי לפתוח תפריט\n` +
+      `2. השתמש/י בכפתורים כדי לבחור סוג תזכורת\n` +
+      `3. בחרי/בחר עיר וזמן לפני הזמן (דרך כפתורי הבחירה)\n` +
+      `4. לנהל תזכורות קיימות דרך תפריט *ניהול התזכורות*\n\n` +
+      `הכול נעשה דרך כפתורים – אין צורך בפקודות טקסט.`
     );
   }
 

@@ -5,105 +5,87 @@ import twilioService from "../../services/twilio";
 import logger from "../../utils/logger";
 import { ReminderType } from "../../types";
 
+// Track reminder list mapping: phoneNumber -> { index: reminderId }
+// Used to map user's number selection (1, 2, 3) to actual reminder IDs
+const reminderListMapping = new Map<string, Map<number, string>>();
+
 export class RemindersCommand {
+  /**
+   * Lists all reminders for a user as a plain text message (NO TEMPLATES)
+   * Stores mapping of list numbers to reminder IDs for later selection
+   */
   async listReminders(phoneNumber: string): Promise<string> {
     try {
       const user = await mongoService.getUserByPhone(phoneNumber);
       if (!user || !user.id) {
-        return "Please complete registration first. Send any message to get started.";
+        return "אנא השלם/י רישום קודם. שלח/י כל הודעה כדי להתחיל.";
       }
 
       const settings = await mongoService.getReminderSettings(user.id);
 
       if (settings.length === 0) {
-        return "📭 You don't have any reminders yet.\n\nUse /menu to set up reminders.";
+        return "📭 אין לך תזכורות עדיין.\n\nהשתמש/י בתפריט כדי להוסיף תזכורת חדשה.";
       }
 
-      // If user has reminders, send a List Picker template with edit buttons
-      // Limit to 5 reminders (max items in List Picker template)
-      const remindersToShow = settings.slice(0, 5);
+      // Build the reminder list text message
+      let message = "📋 התזכורות שלך:\n\n";
 
-      // Create list items for the template
-      // Each item needs: name, id, description
-      // We'll use format: "edit_<reminder_id>" as the ID to identify which reminder to edit
-      const listItems = remindersToShow.map((setting) => {
-        const status = setting.enabled ? "✅" : "❌";
-        const offsetText =
-          setting.time_offset_minutes === 0
-            ? "בזמן"
-            : setting.time_offset_minutes > 0
-            ? `${setting.time_offset_minutes} דקות אחרי`
-            : `${Math.abs(setting.time_offset_minutes)} דקות לפני`;
+      // Create mapping: list number -> reminder ID
+      const mapping = new Map<number, string>();
 
-        const typeName = this.formatReminderTypeHebrew(setting.reminder_type);
-        const emoji = this.getReminderTypeEmoji(setting.reminder_type);
+      settings.forEach((setting, index) => {
+        const listNumber = index + 1;
+        const typeNameHeb = this.formatReminderTypeHebrew(setting.reminder_type);
+        const minutes = setting.time_offset_minutes;
 
-        return {
-          name: `${emoji} ${typeName} - ${offsetText}`,
-          id: `edit_${setting.id}`,
-          desc: `לחץ לעריכה`,
-        };
+        // Format time offset in Hebrew
+        let timeText: string;
+        if (minutes === 0) {
+          timeText = "בזמן";
+        } else if (minutes < 0) {
+          timeText = `${Math.abs(minutes)} דקות לפני סוף זמן`;
+        } else {
+          timeText = `${minutes} דקות אחרי סוף זמן`;
+        }
+
+        message += `${listNumber}️⃣ ${typeNameHeb} – ${timeText}\n`;
+
+        // Store mapping for this reminder
+        mapping.set(listNumber, setting.id!);
       });
 
-      // Populate template variables (same structure as time_picker template)
-      // Item 1: {{1}}=name, {{2}}=id, {{3}}=description
-      // Item 2: {{4}}=name, {{5}}=id, {{6}}=description
-      // etc.
-      const templateVariables: Record<string, string> = {};
-      listItems.forEach((item, index) => {
-        const baseVar = index * 3 + 1; // 1, 4, 7, 10, 13
-        templateVariables[String(baseVar)] = item.name;
-        templateVariables[String(baseVar + 1)] = item.id;
-        templateVariables[String(baseVar + 2)] = item.desc;
-      });
+      // Store the mapping for this user
+      reminderListMapping.set(phoneNumber, mapping);
 
-      // Fill remaining slots if less than 5 items (to avoid template errors)
-      const remainingSlots = 5 - listItems.length;
-      for (let i = listItems.length; i < 5; i++) {
-        const baseVar = i * 3 + 1;
-        templateVariables[String(baseVar)] = "";
-        templateVariables[String(baseVar + 1)] = "";
-        templateVariables[String(baseVar + 2)] = "";
-      }
+      message += `\nמה תרצה לעשות?\n\n`;
+      message += `שלח/י מספר תזכורת (1-${settings.length}) לעריכה או מחיקה.\n`;
+      message += `או שלח/י:\n`;
+      message += `➕ *תזכורת חדשה* - להוספת תזכורת\n`;
+      message += `🔙 *חזרה* - חזרה לתפריט הראשי`;
 
-      try {
-        // Send the reminders list as a template (reusing time_picker template structure)
-        await twilioService.sendTemplateMessage(
-          phoneNumber,
-          "timePicker", // Reuse the time_picker template structure
-          templateVariables
-        );
-
-        return ""; // Empty string means we sent a template, not a text message
-      } catch (error) {
-        logger.error("Error sending reminders template:", error);
-        // Fallback to text message
-        let message = "📋 *Your Reminders:*\n\n";
-        settings.forEach((setting, index) => {
-          const status = setting.enabled ? "✅" : "❌";
-          const offsetText =
-            setting.time_offset_minutes === 0
-              ? "at the time"
-              : setting.time_offset_minutes > 0
-              ? `${setting.time_offset_minutes} min after`
-              : `${Math.abs(setting.time_offset_minutes)} min before`;
-
-          const typeName = this.formatReminderType(setting.reminder_type);
-          const emoji = this.getReminderTypeEmoji(setting.reminder_type);
-
-          message += `${index + 1}. ${emoji} *${typeName}*\n`;
-          message += `   ${status} ${offsetText}\n`;
-          message += `   ID: \`${setting.id}\`\n\n`;
-        });
-        message += `*Commands:*\n`;
-        message += `• /delete <id> - Delete a reminder\n`;
-        message += `• /edit <id> <time> - Edit reminder time\n`;
-        return message;
-      }
+      return message;
     } catch (error) {
       logger.error("Error listing reminders:", error);
-      return "Sorry, there was an error retrieving your reminders.";
+      return "סליחה, אירעה שגיאה בטעינת התזכורות. נסה שוב מאוחר יותר.";
     }
+  }
+
+  /**
+   * Gets the reminder ID for a user's number selection
+   */
+  getReminderIdByNumber(phoneNumber: string, number: number): string | null {
+    const mapping = reminderListMapping.get(phoneNumber);
+    if (!mapping) {
+      return null;
+    }
+    return mapping.get(number) || null;
+  }
+
+  /**
+   * Clears the reminder list mapping for a user
+   */
+  clearReminderMapping(phoneNumber: string): void {
+    reminderListMapping.delete(phoneNumber);
   }
 
   async deleteReminder(
@@ -113,7 +95,7 @@ export class RemindersCommand {
     try {
       const user = await mongoService.getUserByPhone(phoneNumber);
       if (!user || !user.id) {
-        return "Please complete registration first. Send any message to get started.";
+        return "אנא השלם/י רישום קודם. שלח/י כל הודעה כדי להתחיל.";
       }
 
       // Verify the reminder belongs to this user
@@ -121,20 +103,20 @@ export class RemindersCommand {
       const reminderToDelete = allSettings.find((s) => s.id === reminderId);
 
       if (!reminderToDelete) {
-        return "❌ Reminder not found. Use /reminders to see your reminders.";
+        return "❌ תזכורת לא נמצאה. בחר/י תזכורת מהרשימה בתפריט.";
       }
 
       if (reminderToDelete.user_id !== user.id) {
-        return "❌ You can only delete your own reminders.";
+        return "❌ ניתן למחוק רק את התזכורות שלך.";
       }
 
       await mongoService.deleteReminderSetting(reminderId);
 
-      const typeName = this.formatReminderType(reminderToDelete.reminder_type);
-      return `✅ Reminder deleted: ${typeName}`;
+      const typeNameHeb = this.formatReminderTypeHebrew(reminderToDelete.reminder_type);
+      return `✅ התזכורת "${typeNameHeb}" נמחקה בהצלחה.`;
     } catch (error) {
       logger.error("Error deleting reminder:", error);
-      return "Sorry, there was an error deleting the reminder.";
+      return "סליחה, אירעה שגיאה במחיקת התזכורת. נסה שוב.";
     }
   }
 
@@ -154,7 +136,7 @@ export class RemindersCommand {
       const reminderToEdit = allSettings.find((s) => s.id === reminderId);
 
       if (!reminderToEdit) {
-        return "❌ Reminder not found. Use /reminders to see your reminders.";
+        return "❌ Reminder not found. בחר/י תזכורת מהרשימה בתפריט.";
       }
 
       if (reminderToEdit.user_id !== user.id) {
@@ -175,15 +157,15 @@ export class RemindersCommand {
         time_offset_minutes: offsetMinutes,
       });
 
-      const typeName = this.formatReminderType(reminderToEdit.reminder_type);
+      const typeNameHeb = this.formatReminderTypeHebrew(reminderToEdit.reminder_type);
       const offsetText =
         offsetMinutes === 0
-          ? "at the time"
+          ? "בזמן"
           : offsetMinutes > 0
-          ? `${offsetMinutes} minutes after`
-          : `${Math.abs(offsetMinutes)} minutes before`;
+          ? `${offsetMinutes} דקות אחרי סוף זמן`
+          : `${Math.abs(offsetMinutes)} דקות לפני סוף זמן`;
 
-      return `✅ Reminder updated: ${typeName}\nTime: ${offsetText}`;
+      return `✅ התזכורת "${typeNameHeb}" עודכנה בהצלחה.\n⏰ זמן: ${offsetText}`;
     } catch (error) {
       logger.error("Error editing reminder:", error);
       return "Sorry, there was an error updating the reminder.";

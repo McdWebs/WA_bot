@@ -1,4 +1,4 @@
-import { MongoClient, Db, Collection } from "mongodb";
+import { MongoClient, Db, Collection, ObjectId } from "mongodb";
 import { config } from "../config";
 import { User, ReminderSetting } from "../types";
 import logger from "../utils/logger";
@@ -226,6 +226,60 @@ export class MongoService {
     }
   }
 
+  /**
+   * Updates an existing reminder setting by ID
+   * Used for editing reminders (updates offsetMinutes while keeping reminder_type)
+   */
+  async updateReminderSettingById(
+    reminderId: string,
+    updates: Partial<
+      Omit<ReminderSetting, "id" | "created_at" | "user_id" | "reminder_type">
+    >
+  ): Promise<ReminderSetting | null> {
+    try {
+      const reminders = await getReminderPreferencesCollection();
+      const now = new Date().toISOString();
+
+      // Find by _id (MongoDB ObjectId) or custom `id` field
+      let filter: any;
+      if (ObjectId.isValid(reminderId)) {
+        filter = {
+          $or: [{ _id: new ObjectId(reminderId) }, { id: reminderId }],
+        };
+      } else {
+        filter = { id: reminderId };
+      }
+
+      const update = {
+        $set: {
+          ...updates,
+          updated_at: now,
+        },
+      };
+
+      const result = await reminders.findOneAndUpdate(filter, update, {
+        returnDocument: "after",
+      });
+
+      if (!result) {
+        return null;
+      }
+
+      // Depending on driver version, result may be the document itself
+      // or an object with a `.value` property.
+      const value: any =
+        (result as any).value !== undefined ? (result as any).value : result;
+
+      return {
+        ...value,
+        id: value.id || value._id?.toString(),
+      };
+    } catch (error) {
+      logger.error("Error updating reminder setting by ID (Mongo):", error);
+      throw error;
+    }
+  }
+
   async getAllActiveReminderSettings(): Promise<
     (ReminderSetting & { users: User })[]
   > {
@@ -269,7 +323,61 @@ export class MongoService {
   async deleteReminderSetting(reminderId: string): Promise<void> {
     try {
       const reminders = await getReminderPreferencesCollection();
-      await reminders.deleteOne({ id: reminderId });
+      
+      logger.info(`Attempting to delete reminder with ID: ${reminderId} (type: ${typeof reminderId})`);
+      
+      // Try to delete by _id (ObjectId) or id field
+      let filter: any;
+      if (ObjectId.isValid(reminderId)) {
+        // Try both _id (as ObjectId) and id (as string)
+        filter = {
+          $or: [
+            { _id: new ObjectId(reminderId) },
+            { id: reminderId },
+          ],
+        };
+        logger.info(`Using ObjectId filter for deletion: ${JSON.stringify(filter)}`);
+      } else {
+        filter = { id: reminderId };
+        logger.info(`Using string id filter for deletion: ${JSON.stringify(filter)}`);
+      }
+      
+      // First, check if document exists
+      const existing = await reminders.findOne(filter);
+      if (existing) {
+        logger.info(`Found reminder to delete: ${JSON.stringify({ _id: existing._id, id: existing.id })}`);
+      } else {
+        logger.warn(`No reminder found with filter: ${JSON.stringify(filter)}`);
+        // Try alternative: search by _id as ObjectId if valid
+        if (ObjectId.isValid(reminderId)) {
+          const altFilter = { _id: new ObjectId(reminderId) };
+          const altExisting = await reminders.findOne(altFilter);
+          if (altExisting) {
+            logger.info(`Found reminder with alternative filter, but this shouldn't happen`);
+          }
+        }
+      }
+      
+      const result = await reminders.deleteOne(filter);
+      
+      logger.info(`Delete result: ${JSON.stringify({ deletedCount: result.deletedCount, acknowledged: result.acknowledged })}`);
+      
+      if (result.deletedCount === 0) {
+        logger.warn(`No reminder found to delete with ID: ${reminderId}. Filter used: ${JSON.stringify(filter)}`);
+        // Try one more time with just _id as ObjectId if it's valid
+        if (ObjectId.isValid(reminderId)) {
+          const directFilter = { _id: new ObjectId(reminderId) };
+          const directResult = await reminders.deleteOne(directFilter);
+          logger.info(`Direct _id delete attempt: ${JSON.stringify({ deletedCount: directResult.deletedCount })}`);
+          if (directResult.deletedCount === 0) {
+            throw new Error(`Failed to delete reminder with ID: ${reminderId}`);
+          }
+        } else {
+          throw new Error(`Failed to delete reminder with ID: ${reminderId}`);
+        }
+      } else {
+        logger.info(`Successfully deleted reminder with ID: ${reminderId}`);
+      }
     } catch (error) {
       logger.error("Error deleting reminder setting (Mongo):", error);
       throw error;

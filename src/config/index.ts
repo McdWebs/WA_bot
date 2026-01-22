@@ -33,6 +33,8 @@ export const config = {
       process.env.WHATSAPP_TEMPLATE_TEFILIN_TIME_PICKER || "",
     cityPicker: process.env.WHATSAPP_TEMPLATE_CITY_PICKER || "",
     shemaTimePicker: process.env.WHATSAPP_TEMPLATE_SHEMA_TIME_PICKER_V2 || "",
+    reminderList: process.env.WHATSAPP_TEMPLATE_REMINDER_LIST || "",
+    manageReminders: process.env.WHATSAPP_TEMPLATE_MANAGE_REMINDERS || "",
   },
 
   hebcal: {

@@ -6,9 +6,8 @@ import hebcalService from "../services/hebcal";
 import twilioService from "../services/twilio";
 import logger from "../utils/logger";
 import { Gender, ReminderType } from "../types";
-
-// Track which reminder is being edited: phoneNumber -> reminderId
-const editingReminders = new Map<string, string>();
+import reminderService from "../services/reminderService";
+import reminderStateManager, { ReminderStateMode } from "../services/reminderStateManager";
 
 export class MessageHandler {
   /**
@@ -54,6 +53,58 @@ export class MessageHandler {
         return await this.handleCommand(phoneNumber, normalizedMessage);
       }
 
+      // Check user state for reminder management flow
+      const state = reminderStateManager.getState(phoneNumber);
+      
+      if (state?.mode === ReminderStateMode.CHOOSE_REMINDER) {
+        // User is selecting a reminder by number (1, 2, 3...)
+        const result = await reminderService.selectReminder(phoneNumber, messageBody);
+        if (result) {
+          await twilioService.sendMessage(phoneNumber, result);
+        }
+        return "";
+      } else if (state?.mode === ReminderStateMode.REMINDER_ACTION) {
+        // User selected a reminder and now choosing action (edit/delete/back)
+        const normalized = normalizedMessage;
+        let action: "edit" | "delete" | "back" | null = null;
+        
+        if (normalized.includes("ערוך") || normalized.includes("edit")) {
+          action = "edit";
+        } else if (normalized.includes("מחק") || normalized.includes("delete")) {
+          action = "delete";
+        } else if (normalized.includes("חזרה") || normalized.includes("back")) {
+          action = "back";
+        }
+        
+        if (action) {
+          const result = await reminderService.handleReminderAction(phoneNumber, action);
+          if (result) {
+            await twilioService.sendMessage(phoneNumber, result);
+          }
+          // If action is "edit", the service returns empty string and handler will send time picker
+          if (action === "edit") {
+            const reminderId = reminderStateManager.getReminderId(phoneNumber);
+            if (reminderId) {
+              const reminder = await reminderService.getReminder(phoneNumber, reminderId);
+              if (reminder) {
+                const user = await mongoService.getUserByPhone(phoneNumber);
+                await this.sendTimePickerForReminderType(
+                  phoneNumber,
+                  reminder.reminder_type,
+                  user?.location
+                );
+              }
+            }
+          }
+          return "";
+        } else {
+          return "אנא בחר/י פעולה:\n✏️ *ערוך* - לעריכת התזכורת\n🗑️ *מחק* - למחיקת התזכורת\n🔙 *חזרה* - חזרה לרשימה";
+        }
+      } else if (state?.mode === ReminderStateMode.CONFIRMING_DELETE) {
+        // User is confirming deletion
+        return await this.handleDeleteConfirmation(phoneNumber, messageBody);
+      }
+
       // Check if this is a new user
       const user = await mongoService.getUserByPhone(phoneNumber);
 
@@ -65,18 +116,27 @@ export class MessageHandler {
           timezone: undefined,
           location: undefined,
         });
-        // Go straight to main menu (no gender question)
-        await this.sendMainMenu(phoneNumber, "prefer_not_to_say");
-        return ""; // Empty string means template was sent
+        // First interaction: go straight to manage reminders menu
+        await this.sendManageRemindersMenu(phoneNumber);
+        return ""; // Template sent
       }
 
-      // Show main menu (use user's gender if set, otherwise show all options)
-      const gender: Gender = (user.gender as Gender) || "prefer_not_to_say";
-      await this.sendMainMenu(phoneNumber, gender);
-      return ""; // Empty string means template was sent
+      // Check for text-based actions
+      if (normalizedMessage.includes("תזכורת חדשה") || normalizedMessage.includes("חדשה")) {
+        const gender: Gender = (user.gender as Gender) || "prefer_not_to_say";
+        await this.sendMainMenu(phoneNumber, gender);
+        return "";
+      } else if (normalizedMessage.includes("חזרה") || normalizedMessage.includes("back")) {
+        await this.sendManageRemindersMenu(phoneNumber);
+        return "";
+      }
+
+      // Default: show manage reminders menu
+      await this.sendManageRemindersMenu(phoneNumber);
+      return ""; // Template sent
     } catch (error) {
       logger.error("Error handling incoming message:", error);
-      return "Sorry, there was an error processing your message. Please try again.";
+      return "סליחה, אירעה שגיאה בעיבוד ההודעה. נסה שוב.";
     }
   }
 
@@ -84,91 +144,19 @@ export class MessageHandler {
     phoneNumber: string,
     command: string
   ): Promise<string> {
-    const parts = command.split(/\s+/);
-    const cmd = parts[0];
-    const args = parts.slice(1);
+    const normalized = command.trim().toLowerCase();
 
-    switch (cmd) {
-      case "/start":
-      case "/menu":
-        // Always open the main menu template instead of text menu
-        try {
-          const user = await mongoService.getUserByPhone(phoneNumber);
-          const gender: Gender =
-            (user?.gender as Gender) || "prefer_not_to_say";
-          await this.sendMainMenu(phoneNumber, gender);
-          return "";
-        } catch (error) {
-          logger.error("Error handling /start or /menu command:", error);
-          return "Sorry, there was an error opening the menu. Please try again.";
-        }
-
-      case "/help":
-        return await menuCommand.showHelp(phoneNumber);
-
-      case "/templates":
-        return await menuCommand.showTemplates(phoneNumber);
-
-      case "/settings":
-        const settingsCommand = (await import("./commands/settings")).default;
-        return await settingsCommand.getReminderSettings(phoneNumber);
-
-      case "/sunset":
-        return await menuCommand.handleReminderTypeCommand(
-          phoneNumber,
-          "sunset",
-          args.join(" ")
-        );
-
-      case "/candles":
-      case "/candle":
-      case "/candlelighting":
-        return await menuCommand.handleReminderTypeCommand(
-          phoneNumber,
-          "candle_lighting",
-          args.join(" ")
-        );
-
-      case "/prayer":
-      case "/prayers":
-        return await menuCommand.handleReminderTypeCommand(
-          phoneNumber,
-          "prayer",
-          args.join(" ")
-        );
-
-      case "/reminders":
-        const remindersCommand = (await import("./commands/reminders")).default;
-        const remindersResult = await remindersCommand.listReminders(
-          phoneNumber
-        );
-        // If empty string, template was sent, return a confirmation message
-        if (remindersResult === "") {
-          return "📋 Sending your reminders list...";
-        }
-        return remindersResult;
-
-      case "/delete":
-        if (args.length === 0) {
-          return "Please provide a reminder ID. Use /reminders to see your reminders.";
-        }
-        const deleteCommand = (await import("./commands/reminders")).default;
-        return await deleteCommand.deleteReminder(phoneNumber, args[0]);
-
-      case "/edit":
-        if (args.length < 2) {
-          return "Please provide a reminder ID and time. Example: /edit <id> 30";
-        }
-        const editCommand = (await import("./commands/reminders")).default;
-        return await editCommand.editReminder(
-          phoneNumber,
-          args[0],
-          args.slice(1).join(" ")
-        );
-
-      default:
-        return "Unknown command. Use /menu to see available commands.";
+    // Minimal command handling – gently push users to use buttons/templates
+    if (normalized === "/start" || normalized === "/menu") {
+      await this.sendManageRemindersMenu(phoneNumber);
+      return "";
     }
+
+    if (normalized === "/help") {
+      return "אין צורך בפקודות טקסט 🙂 פשוט השתמש/י בכפתורים שבתפריטים כדי לנהל את התזכורות.";
+    }
+
+    return "המערכת עובדת עם כפתורים בלבד. שלח/י הודעה רגילה וקבל/י תפריט עם אפשרויות.";
   }
 
   /**
@@ -216,6 +204,26 @@ export class MessageHandler {
         logger.error(`❌ Failed to send fallback menu to ${phoneNumber}:`, fallbackError);
         throw fallbackError;
       }
+    }
+  }
+
+  /**
+   * Sends the "manage reminders" quick-reply menu
+   */
+  private async sendManageRemindersMenu(phoneNumber: string): Promise<void> {
+    try {
+      logger.info(`🧩 Sending manage reminders menu to ${phoneNumber}`);
+      await twilioService.sendTemplateMessage(phoneNumber, "manageReminders");
+      logger.info(`Manage reminders menu sent to ${phoneNumber}`);
+    } catch (error) {
+      logger.error(
+        `Error sending manage reminders menu to ${phoneNumber}:`,
+        error
+      );
+      await twilioService.sendMessage(
+        phoneNumber,
+        "לא הצלחתי לפתוח את תפריט ניהול התזכורות. נסה שוב מאוחר יותר."
+      );
     }
   }
 
@@ -269,6 +277,13 @@ export class MessageHandler {
         normalizedButton === "candle_lighting" ||
         normalizedButton === "shema";
 
+      // Check if this is from the "manage reminders" menu or button
+      const isManageRemindersAction =
+        normalizedButton === "manage_reminders" ||
+        normalizedButton === "show_reminders" ||
+        normalizedButton === "add_reminder" ||
+        normalizedButton === "close_menu";
+
       // Check if this is an edit button from reminders list (format: "edit_<reminder_id>")
       const isEditReminderButton = normalizedButton.startsWith("edit_");
 
@@ -321,6 +336,30 @@ export class MessageHandler {
           this.creatingReminderType.set(phoneNumber, "shema");
           await this.sendShemaTimePicker(phoneNumber);
         }
+      } else if (isManageRemindersAction) {
+        // Handle buttons from manage reminders quick-reply template
+        if (normalizedButton === "manage_reminders") {
+          // Main menu button to open the manage reminders menu
+          await this.sendManageRemindersMenu(phoneNumber);
+        } else if (normalizedButton === "show_reminders") {
+          // Use ReminderService to list reminders
+          const result = await reminderService.listReminders(phoneNumber);
+          if (result && result.trim() !== "") {
+            await twilioService.sendMessage(phoneNumber, result);
+            // State is set by ReminderService.listReminders()
+          }
+        } else if (normalizedButton === "add_reminder") {
+          // Reuse the main menu to start a new reminder flow
+          const user = await mongoService.getUserByPhone(phoneNumber);
+          const gender: Gender =
+            (user?.gender as Gender) || "prefer_not_to_say";
+          await this.sendMainMenu(phoneNumber, gender);
+        } else if (normalizedButton === "close_menu") {
+          await twilioService.sendMessage(
+            phoneNumber,
+            "תפריט ניהול התזכורות נסגר. אפשר תמיד לפתוח מחדש דרך /menu."
+          );
+        }
       } else if (isEditReminderButton) {
         // User clicked "Edit" on a reminder → store reminder ID and send time picker template
         const reminderId = normalizedButton.replace("edit_", "");
@@ -328,41 +367,61 @@ export class MessageHandler {
           `✅ Detected edit reminder button for reminder ID: ${reminderId}`
         );
 
-        // Store which reminder is being edited
-        editingReminders.set(phoneNumber, reminderId);
+        // Set state for editing
+        reminderStateManager.setState(phoneNumber, {
+          mode: ReminderStateMode.EDIT_REMINDER,
+          reminderId,
+        });
 
-        // Send time picker template
-        await this.sendTimePickerForSunset(
-          phoneNumber,
-          user.location || "Jerusalem"
-        );
+        // Get reminder to determine which time picker to send
+        const reminder = await reminderService.getReminder(phoneNumber, reminderId);
+        if (reminder) {
+          await this.sendTimePickerForReminderType(
+            phoneNumber,
+            reminder.reminder_type,
+            user.location
+          );
+        } else {
+          // Fallback to sunset time picker
+          await this.sendTimePickerForSunset(
+            phoneNumber,
+            user.location || "Jerusalem"
+          );
+        }
       } else if (isTimePickerSelection) {
         // User selected time from time picker
-        const editingReminderId = editingReminders.get(phoneNumber);
-        const currentReminderType = editingReminderId
-          ? (await mongoService.getReminderSettings(user.id!)).find(
-              (s) => s.id === editingReminderId
-            )?.reminder_type
-          : null;
-
-        if (editingReminderId && currentReminderType) {
-          // Editing existing reminder
-          logger.info(
-            `✅ Editing existing reminder ${editingReminderId} with time selection: ${buttonIdentifier}`
-          );
-          await this.updateReminderFromTimePicker(
-            phoneNumber,
-            editingReminderId,
-            buttonIdentifier,
-            currentReminderType
-          );
-          editingReminders.delete(phoneNumber);
+        const state = reminderStateManager.getState(phoneNumber);
+        
+        if (state?.mode === ReminderStateMode.EDIT_REMINDER && state.reminderId) {
+          // Editing existing reminder - use ReminderService
+          const reminder = await reminderService.getReminder(phoneNumber, state.reminderId);
+          if (reminder) {
+            // Map time picker selection to offset minutes
+            const timeOffsetMap: Record<string, number> = {
+              "10": -10,
+              "20": -20,
+              "30": -30,
+              "45": -45,
+              "60": -60,
+            };
+            const offsetMinutes = timeOffsetMap[buttonIdentifier] ?? 0;
+            
+            const result = await reminderService.updateReminderOffset(
+              phoneNumber,
+              state.reminderId,
+              offsetMinutes
+            );
+            await twilioService.sendMessage(phoneNumber, result);
+            
+            // Clear state
+            reminderStateManager.clearState(phoneNumber);
+            logger.info(
+              `✅ Updated reminder ${state.reminderId} with offset ${offsetMinutes} for ${phoneNumber}`
+            );
+          }
         } else {
           // Creating new reminder - need to know which type
-          // This should be tracked separately, but for now we'll infer from context
-          // Store the reminder type being created
-          const creatingReminderType =
-            this.getCreatingReminderType(phoneNumber);
+          const creatingReminderType = this.getCreatingReminderType(phoneNumber);
           if (creatingReminderType) {
             await this.saveReminderFromTimePicker(
               phoneNumber,
@@ -966,6 +1025,70 @@ export class MessageHandler {
       prayer: "זמני תפילה",
     };
     return types[type] || type;
+  }
+
+  /**
+   * Handles delete confirmation
+   */
+  private async handleDeleteConfirmation(
+    phoneNumber: string,
+    messageBody: string
+  ): Promise<string> {
+    try {
+      const normalized = messageBody.trim().toLowerCase();
+      const state = reminderStateManager.getState(phoneNumber);
+
+      if (!state || state.mode !== ReminderStateMode.CONFIRMING_DELETE || !state.reminderId) {
+        reminderStateManager.clearState(phoneNumber);
+        return "❌ לא נמצאה תזכורת למחיקה.";
+      }
+
+      if (normalized === "כן" || normalized === "yes" || normalized === "אישור") {
+        // Delete the reminder using ReminderService
+        const result = await reminderService.deleteReminder(phoneNumber, state.reminderId);
+        
+        // Clear state
+        reminderStateManager.clearState(phoneNumber);
+
+        await twilioService.sendMessage(phoneNumber, result);
+        return "";
+      } else if (normalized === "לא" || normalized === "no" || normalized === "ביטול") {
+        // Cancel deletion
+        reminderStateManager.clearState(phoneNumber);
+        await twilioService.sendMessage(phoneNumber, "❌ המחיקה בוטלה.");
+        return "";
+      } else {
+        return "אנא שלח/י 'כן' לאישור או 'לא' לביטול.";
+      }
+    } catch (error) {
+      logger.error("Error handling delete confirmation:", error);
+      reminderStateManager.clearState(phoneNumber);
+      return "סליחה, אירעה שגיאה. נסה שוב.";
+    }
+  }
+
+  /**
+   * Sends appropriate time picker based on reminder type
+   */
+  private async sendTimePickerForReminderType(
+    phoneNumber: string,
+    reminderType: ReminderType,
+    location?: string
+  ): Promise<void> {
+    if (reminderType === "tefillin") {
+      await this.sendTefilinTimePicker(phoneNumber, location);
+    } else if (reminderType === "shema") {
+      await this.sendShemaTimePicker(phoneNumber);
+    } else if (reminderType === "candle_lighting") {
+      // Candle lighting doesn't use time picker, but if editing, we might need to handle it
+      await twilioService.sendMessage(
+        phoneNumber,
+        "תזכורת הדלקת נרות נשלחת כל יום שישי ב-8:00 בבוקר. אין צורך לבחור זמן."
+      );
+    } else {
+      // Fallback: use sunset time picker
+      await this.sendTimePickerForSunset(phoneNumber, location || "Jerusalem");
+    }
   }
 }
 
