@@ -5,6 +5,7 @@ import reminderScheduler from "./schedulers/reminderScheduler";
 import twilioService from "./services/twilio";
 import logger from "./utils/logger";
 import reminderStateManager, { ReminderStateMode } from "./services/reminderStateManager";
+import mongoService from "./services/mongo";
 
 const app = express();
 
@@ -33,246 +34,170 @@ app.get("/webhook/test", (req, res) => {
   });
 });
 
-// Debug middleware - parse body first, then log (CRITICAL: body parsing must happen before logging)
-app.post("/webhook/whatsapp", express.urlencoded({ extended: true }), (req, res, next) => {
-  logger.info("=== WEBHOOK REQUEST RECEIVED ===");
-  logger.info("Method:", req.method);
-  logger.info("Content-Type:", req.headers["content-type"]);
-  logger.info("Body keys:", Object.keys(req.body || {}));
-  logger.info("Body:", JSON.stringify(req.body, null, 2));
-  logger.info("================================");
-  next();
-});
-
-// Twilio webhook endpoint for incoming WhatsApp messages
-app.post("/webhook/whatsapp", async (req, res) => {
-  // Log that we received a webhook
-  logger.info("🔔 WEBHOOK CALLED - Received POST request to /webhook/whatsapp");
-  logger.info(`Full request body: ${JSON.stringify(req.body, null, 2)}`);
-  logger.info(`Body type: ${typeof req.body}`);
-  logger.info(`Body keys: ${JSON.stringify(Object.keys(req.body || {}))}`);
-
-  // Respond to Twilio immediately to avoid timeout
-  // Use plain text response for WhatsApp webhooks (not XML/TwiML)
-  // res.status(200).contentType('text/plain').send("OK");
-
+/**
+ * Process incoming WhatsApp message in background
+ * This function runs AFTER webhook response is sent
+ * Optimized to send templates IMMEDIATELY for simple flows
+ */
+async function processWhatsAppMessage(reqBody: any): Promise<void> {
+  const processStartTime = Date.now();
+  
   try {
-    // Try different field name variations (Twilio might send different cases)
-    const From = req.body?.From || req.body?.from || req.body?.FROM;
-    const Body = req.body?.Body || req.body?.body || req.body?.BODY;
-    const MessageSid = req.body?.MessageSid || req.body?.messageSid || req.body?.MessageSID;
-    const ButtonText = req.body?.ButtonText || req.body?.buttonText;
-    const ButtonPayload = req.body?.ButtonPayload || req.body?.buttonPayload;
-    const MessageType = req.body?.MessageType || req.body?.messageType;
-    const ListId = req.body?.ListId || req.body?.listId;
-
-    logger.info("Extracted fields:", {
-      From,
-      Body,
-      MessageSid,
-      ButtonText,
-      ButtonPayload,
-      MessageType,
-      ListId,
-    });
+    // Extract fields (case-insensitive)
+    const From = reqBody?.From || reqBody?.from || reqBody?.FROM;
+    const Body = reqBody?.Body || reqBody?.body || reqBody?.BODY || "";
+    const ButtonText = reqBody?.ButtonText || reqBody?.buttonText;
+    const ButtonPayload = reqBody?.ButtonPayload || reqBody?.buttonPayload;
+    const MessageType = reqBody?.MessageType || reqBody?.messageType;
+    const ListId = reqBody?.ListId || reqBody?.listId;
 
     if (!From) {
       logger.error("❌ CRITICAL: From field is missing from webhook!");
-      logger.error(`Raw req.body: ${JSON.stringify(req.body, null, 2)}`);
-      logger.error(`All body keys: ${JSON.stringify(Object.keys(req.body || {}))}`);
-      
-      // Try to extract phone number from Payload if it's a JSON string (Twilio error webhooks)
-      let phoneNumber = null;
-      if (req.body?.Payload) {
-        try {
-          const payload = JSON.parse(req.body.Payload);
-          if (payload?.webhook?.request?.parameters?.From) {
-            phoneNumber = payload.webhook.request.parameters.From.replace("whatsapp:", "").trim();
-            logger.info(`Found phone in Payload From: ${phoneNumber}`);
-          } else if (payload?.webhook?.request?.parameters?.WaId) {
-            phoneNumber = `+${payload.webhook.request.parameters.WaId}`;
-            logger.info(`Found phone in Payload WaId: ${phoneNumber}`);
-          }
-        } catch (e) {
-          logger.error("Failed to parse Payload:", e);
-        }
-      }
-      
-      // Try other fields as fallback
-      if (!phoneNumber) {
-        const possiblePhoneFields = [
-          req.body?.WaId,
-          req.body?.waId,
-        ];
-        
-        const foundPhone = possiblePhoneFields.find(field => field && (field.includes('+') || /^\d+$/.test(field)));
-        
-        if (foundPhone) {
-          phoneNumber = foundPhone.includes('+') ? foundPhone : `+${foundPhone}`;
-          logger.info(`Found phone in alternative field: ${phoneNumber}`);
-        }
-      }
-      
-      if (phoneNumber) {
-        try {
-          // await twilioService.sendMessage(
-          //   phoneNumber,
-          //   "✅ Webhook received! Processing your message..."
-          // );
-          logger.info(`✅ Sent response using extracted phone number`);
-        } catch (sendError) {
-          logger.error(`Failed to send response:`, sendError);
-        }
-      } else {
-        logger.error("Could not find phone number in any field");
-      }
-      
       return;
     }
 
     // Extract phone number (remove 'whatsapp:' prefix if present)
     const phoneNumber = From.replace("whatsapp:", "").trim();
+    const messageBody = Body.trim();
 
-    // Handle interactive template button clicks
-    // ButtonText, ButtonPayload, ListId (for list picker), or Body can contain the button identifier
-    // Extract button identifier - prioritize ButtonPayload (stable ID), then ButtonText
-    let buttonIdentifier = ButtonPayload || ButtonText;
-    const messageBody = Body?.trim() || "";
+    // Parse WhatsApp Interactive message correctly
+    // Twilio sends MessageType as "interactive" OR "button" for button clicks
+    let buttonIdentifier: string | null = null;
+    const isInteractive = MessageType === "interactive" || MessageType === "button";
 
-    // If no explicit button fields, try to extract button from Body
-    // Handle cases like "1", "1.", "You said :1", "0", "15", "30", "45", "60", etc.
-    // NOTE: "You said :1" is Twilio's default response when webhook isn't configured
-    if (!buttonIdentifier && messageBody) {
-      // Try to extract button from "You said :X" pattern (Twilio echo when webhook not configured)
-      // Supports both single digits (1-9) and time picker IDs (0, 15, 30, 45, 60)
-      const twilioEchoMatch = messageBody.match(
-        /You said\s*:?\s*([1-9]|0|15|30|45|60)/i
-      );
-      if (twilioEchoMatch) {
-        buttonIdentifier = twilioEchoMatch[1];
-        logger.warn(
-          `⚠️ Detected Twilio echo message - webhook may not be configured! Message: "${messageBody}"`
-        );
-      } else {
-        // Try to extract just the number/button identifier
-        // Match single digits (1-9) or time picker IDs (0, 15, 30, 45, 60)
-        const buttonMatch = messageBody.match(
-          /(?:^|:|\s)([1-9][\.:]?|0|15|30|45|60)(?:\s|$|\.)/
-        );
-        if (buttonMatch) {
-          buttonIdentifier = buttonMatch[1].replace(/[\.:]$/, "");
-        } else {
-          buttonIdentifier = messageBody;
-        }
+    // Log raw webhook data for debugging
+    logger.info(`📥 Webhook data for ${phoneNumber}: MessageType="${MessageType}", Body="${Body.substring(0, 50)}", ButtonPayload="${ButtonPayload}", ButtonText="${ButtonText}", ListId="${ListId}"`);
+
+    if (isInteractive) {
+      // Interactive/Button message - use ButtonPayload (preferred) or ButtonText
+      buttonIdentifier = ButtonPayload || ButtonText || null;
+      
+      // List Picker uses ListId
+      if (!buttonIdentifier && ListId) {
+        buttonIdentifier = ListId;
       }
+      
+      logger.info(`🔘 Interactive/Button message detected: buttonIdentifier="${buttonIdentifier}" for ${phoneNumber}`);
+    } else {
+      logger.info(`📝 Text message detected: "${Body.substring(0, 50)}" for ${phoneNumber}`);
     }
 
-    // If this is a List Picker selection, use ListId as the button identifier
-    if (!buttonIdentifier && MessageType === "interactive" && ListId) {
-      buttonIdentifier = ListId;
-    }
+    // Check if user is in reminder selection mode (treat numeric input as text)
+    const userState = reminderStateManager.getState(phoneNumber);
+    const isInReminderSelectionMode = userState?.mode === ReminderStateMode.CHOOSE_REMINDER;
+    const shouldTreatAsText = isInReminderSelectionMode && /^\d+$/.test(messageBody);
+    const isButtonClick = isInteractive && !!buttonIdentifier;
+    
+    logger.info(`🔍 Message classification for ${phoneNumber}: isInteractive=${isInteractive}, buttonIdentifier="${buttonIdentifier}", isButtonClick=${isButtonClick}, shouldTreatAsText=${shouldTreatAsText}`);
 
-    logger.info(`Processing message from ${phoneNumber}:`, {
-      Body: messageBody,
-      ButtonText,
-      ButtonPayload,
-      extractedButton: buttonIdentifier,
-      fullBody: req.body,
-    });
+    const templateSendStartTime = Date.now();
 
-    // Process message asynchronously
-    (async () => {
-      try {
-        // Check if this is a button click from an interactive template
-        // CRITICAL: Only treat as button click if we have explicit ButtonText/ButtonPayload/ListId
-        // OR if Body is EXACTLY a number that indicates a button selection
-        // This ensures we ONLY respond to actual button clicks, not regular messages
-        const isExplicitButtonClick = !!(ButtonText || ButtonPayload || ListId);
-        const trimmedBody = messageBody.trim();
-        // Check for single digit (1-9) or time picker selections (0, 15, 30, 45, 60)
-        const isSimpleNumberClick =
-          trimmedBody &&
-          (/^[1-9][\.:]?$/.test(trimmedBody) ||
-            /^(0|15|30|45|60)$/.test(trimmedBody));
-        // Also detect "You said :1" pattern (Twilio echo when webhook not configured)
-        const isTwilioEcho = /You said\s*:?\s*([1-9]|0|15|30|45|60)/i.test(
-          trimmedBody
-        );
-        const isButtonClick =
-          isExplicitButtonClick || isSimpleNumberClick || isTwilioEcho;
-
-        // Check if user is in CHOOSE_REMINDER state - if so, treat numeric input as text (reminder selection)
-        const userState = reminderStateManager.getState(phoneNumber);
-        const isInReminderSelectionMode = userState?.mode === ReminderStateMode.CHOOSE_REMINDER;
+    // OPTIMIZATION: For simple button clicks that just send a template, send it IMMEDIATELY
+    if (isButtonClick && !shouldTreatAsText && buttonIdentifier) {
+      const normalizedButton = buttonIdentifier.toLowerCase().trim();
+      
+      // Fast path: Simple template sends that don't need DB queries
+      // These buttons just send a template - no DB, no logic needed
+      const fastPathButtons: Record<string, string> = {
+        "manage_reminders": "manageReminders",
+      };
+      
+      const templateKey = fastPathButtons[normalizedButton];
+      if (templateKey) {
+        // Send template IMMEDIATELY without any DB queries or processing
+        await twilioService.sendTemplateMessage(phoneNumber, templateKey as any);
+        const templateSendTime = Date.now() - templateSendStartTime;
+        logger.info(`⚡ Template sent in ${templateSendTime}ms for ${phoneNumber} (fast path: ${normalizedButton})`);
         
-        // If user is selecting a reminder by number, treat it as regular text message
-        const shouldTreatAsText = isInReminderSelectionMode && isSimpleNumberClick;
-
-        logger.info(`📥 Message analysis:`, {
-          hasButtonText: !!ButtonText,
-          hasButtonPayload: !!ButtonPayload,
-          body: messageBody,
-          isExplicitButton: isExplicitButtonClick,
-          isSimpleNumber: isSimpleNumberClick,
-          isButtonClick: isButtonClick,
-          buttonIdentifier: buttonIdentifier,
-          userState: userState?.mode,
-          shouldTreatAsText: shouldTreatAsText,
+        // Process in background (non-critical - just for logging/state updates)
+        setImmediate(() => {
+          messageHandler.handleInteractiveButton(phoneNumber, buttonIdentifier!).catch((err) => {
+            logger.debug(`Background processing error (non-critical):`, err);
+          });
         });
-
-        if (isButtonClick && buttonIdentifier && !shouldTreatAsText) {
-          logger.info(
-            `🔘 Detected button click: "${buttonIdentifier}" (ButtonText: ${ButtonText}, ButtonPayload: ${ButtonPayload}, Body: "${messageBody}")`
-          );
-          await messageHandler.handleInteractiveButton(
-            phoneNumber,
-            buttonIdentifier
-          );
-        } else {
-          // Handle regular message (or reminder selection in CHOOSE_REMINDER mode)
-          logger.info(
-            `💬 Handling as regular message${shouldTreatAsText ? ' (reminder selection mode)' : ''}: "${messageBody}"`
-          );
-          const response = await messageHandler.handleIncomingMessage(
-            phoneNumber,
-            messageBody
-          );
-
-          // If response is empty, template was sent (don't send text message)
-          if (response && response.trim() !== "") {
-            logger.info(
-              `Sending response to ${phoneNumber}: ${response.substring(
-                0,
-                50
-              )}...`
-            );
-            await twilioService.sendMessage(phoneNumber, response);
-          } else {
-            logger.info(
-              `Template was sent to ${phoneNumber}, skipping text message`
-            );
-          }
-        }
-
-        logger.info(`Response sent successfully to ${phoneNumber}`);
-      } catch (error) {
-        logger.error(`Error processing message from ${phoneNumber}:`, error);
-        
-        // Always send fallback message to user
-        try {
-          await twilioService.sendMessage(
-            phoneNumber,
-            "סליחה, אירעה שגיאה. נסה שוב או שלח /menu"
-          );
-          logger.info(`✅ Sent error fallback message to ${phoneNumber}`);
-        } catch (fallbackError) {
-          logger.error(`❌ Failed to send fallback message to ${phoneNumber}:`, fallbackError);
-        }
+        return;
       }
-    })();
+      
+      // Other button clicks - process normally (may need DB)
+      logger.info(`🔘 Processing button click: "${buttonIdentifier}" from ${phoneNumber}`);
+      await messageHandler.handleInteractiveButton(phoneNumber, buttonIdentifier);
+    } else {
+      // Regular text message - check if it's a new user (send template immediately)
+      // Use cache to check user quickly without DB query
+      const user = await mongoService.getUserByPhone(phoneNumber);
+      
+      if (!user) {
+        // New user - send template IMMEDIATELY, create user in background
+        await twilioService.sendTemplateMessage(phoneNumber, "manageReminders");
+        const templateSendTime = Date.now() - templateSendStartTime;
+        logger.info(`⚡ Template sent in ${templateSendTime}ms for new user ${phoneNumber} (fast path)`);
+        
+        // Create user in background (non-critical)
+        setImmediate(() => {
+          mongoService.createUser({
+            phone_number: phoneNumber,
+            status: "active",
+            timezone: undefined,
+            location: undefined,
+          }).catch((err) => {
+            logger.error(`Background user creation error:`, err);
+          });
+        });
+        return;
+      }
+      
+      // Existing user - process normally
+      logger.info(`💬 Processing text message from ${phoneNumber}: "${messageBody.substring(0, 50)}"`);
+      const response = await messageHandler.handleIncomingMessage(phoneNumber, messageBody);
+      
+      if (response && response.trim() !== "") {
+        await twilioService.sendMessage(phoneNumber, response);
+      }
+    }
+
+    const totalProcessTime = Date.now() - processStartTime;
+    const templateSendTime = Date.now() - templateSendStartTime;
+    logger.info(`✅ Message processed in ${totalProcessTime}ms (template send: ${templateSendTime}ms) for ${phoneNumber}`);
   } catch (error) {
-    logger.error("Error handling webhook:", error);
+    logger.error(`❌ Error processing WhatsApp message:`, error);
+    
+    // Try to send error message to user if we have phone number
+    try {
+      const From = reqBody?.From || reqBody?.from || reqBody?.FROM;
+      if (From) {
+        const phoneNumber = From.replace("whatsapp:", "").trim();
+        await twilioService.sendMessage(
+          phoneNumber,
+          "סליחה, אירעה שגיאה. נסה שוב או שלח /menu"
+        );
+      }
+    } catch (fallbackError) {
+      logger.error(`❌ Failed to send error fallback:`, fallbackError);
+    }
   }
+}
+
+// Twilio webhook endpoint for incoming WhatsApp messages
+app.post("/webhook/whatsapp", (req, res) => {
+  const webhookReceiveTime = Date.now();
+  
+  // CRITICAL: Respond to Twilio IMMEDIATELY - no await, no async, no conditionals
+  // This must be the FIRST thing we do
+  // Send empty 200 response (not "OK" text) to avoid Twilio sending it as a message
+  res.status(200).send("");
+  
+  const webhookResponseTime = Date.now();
+  const responseLatency = webhookResponseTime - webhookReceiveTime;
+  
+  logger.info(`⚡ Webhook ACK sent in ${responseLatency}ms`);
+
+  // Process message in background (non-blocking)
+  // Use setImmediate to ensure response is fully sent before processing starts
+  setImmediate(() => {
+    processWhatsAppMessage(req.body).catch((error) => {
+      logger.error(`❌ Unhandled error in background processing:`, error);
+    });
+  });
 });
 
 // Twilio status callback endpoint for message delivery status
@@ -287,8 +212,6 @@ app.post("/webhook/status", async (req, res) => {
       ErrorMessage,
     });
 
-    // Respond to Twilio
-    // res.status(200).send("OK");
   } catch (error) {
     logger.error("Error handling status callback:", error);
     res.status(500).send("Internal server error");

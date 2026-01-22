@@ -7,6 +7,7 @@ import timezoneService from "../utils/timezone";
 import messageTemplateService from "../utils/messageTemplates";
 import logger from "../utils/logger";
 import { ReminderSetting, User } from "../types";
+import { config } from "../config";
 
 export class ReminderScheduler {
   private isRunning = false;
@@ -17,23 +18,58 @@ export class ReminderScheduler {
       return;
     }
 
+    // WARNING: Test mode check
+    if (config.testMode.enabled) {
+      logger.warn("⚠️⚠️⚠️ TEST MODE ENABLED ⚠️⚠️⚠️");
+      logger.warn("Reminders will trigger based on CURRENT TIME, not scheduled time!");
+      logger.warn("This is ONLY for testing - DO NOT use in production!");
+      logger.warn(`Trigger window: ${config.testMode.triggerWindowMinutes} minutes`);
+    }
+
     // Run every minute to check for reminders
     cron.schedule("* * * * *", async () => {
+      logger.info(`🧪 TEST MODE: Scheduler running at ${new Date().toISOString()}`);
       await this.checkAndSendReminders();
     });
 
     this.isRunning = true;
     logger.info("Reminder scheduler started");
+    
+    // TEST MODE: Run immediately on startup for testing
+    if (config.testMode.enabled) {
+      logger.info("🧪 TEST MODE: Running initial check immediately...");
+      setImmediate(() => {
+        this.checkAndSendReminders().catch((err) => {
+          logger.error("🧪 TEST MODE: Error in initial check:", err);
+        });
+      });
+    }
   }
 
   private async checkAndSendReminders(): Promise<void> {
     try {
+      logger.info(`🧪 TEST MODE: Starting reminder check at ${new Date().toISOString()}`);
+      
       // Get all active reminder settings with user data
       const settings = await mongoService.getAllActiveReminderSettings();
 
+      logger.info(`🧪 TEST MODE: Fetched ${settings.length} active reminder(s) from database`);
+
       if (settings.length === 0) {
+        logger.info("🧪 TEST MODE: No active reminders found - nothing to check");
         return;
       }
+
+      // Log all reminders with test_time for debugging
+      for (const setting of settings) {
+        logger.info(
+          `🧪 TEST MODE: Reminder ${setting.id} (${setting.reminder_type}) - ` +
+          `enabled: ${setting.enabled}, test_time: ${setting.test_time || 'none'}, ` +
+          `user: ${(setting as any).users?.phone_number || 'unknown'}`
+        );
+      }
+
+      logger.debug(`🧪 TEST MODE: Checking ${settings.length} active reminder(s)`);
 
       // Group settings by user
       const userSettingsMap = new Map<
@@ -62,8 +98,14 @@ export class ReminderScheduler {
       ] of userSettingsMap) {
         await this.checkUserReminders(user, userSettings);
       }
-    } catch (error) {
-      logger.error("Error checking reminders:", error);
+    } catch (error: any) {
+      // Only log network/DNS errors at debug level to reduce noise
+      // These are usually temporary connectivity issues
+      if (error?.message?.includes("ENOTFOUND") || error?.message?.includes("getaddrinfo")) {
+        logger.debug(`MongoDB connection issue (likely temporary): ${error.message}`);
+      } else {
+        logger.error("Error checking reminders:", error);
+      }
     }
   }
 
@@ -134,7 +176,14 @@ export class ReminderScheduler {
       }
 
       for (const setting of settings) {
-        if (!setting.enabled) continue;
+        if (!setting.enabled) {
+          logger.debug(`🧪 TEST MODE: Skipping disabled reminder ${setting.id} for ${user.phone_number}`);
+          continue;
+        }
+
+        logger.debug(
+          `🧪 TEST MODE: Checking reminder ${setting.id} (${setting.reminder_type}) for ${user.phone_number}, test_time: ${setting.test_time || 'none'}`
+        );
 
         const shouldSend = await this.shouldSendReminder(
           setting,
@@ -144,7 +193,10 @@ export class ReminderScheduler {
         );
 
         if (shouldSend) {
+          logger.info(`🧪 TEST MODE: ✅ Sending reminder ${setting.id} to ${user.phone_number}`);
           await this.sendReminder(user, setting, hebcalData, location);
+        } else {
+          logger.debug(`🧪 TEST MODE: Not sending reminder ${setting.id} - shouldSend=false`);
         }
       }
     } catch (error) {
@@ -162,6 +214,13 @@ export class ReminderScheduler {
     dateStr: string
   ): Promise<boolean> {
     try {
+      // TEST MODE: If enabled, trigger reminders based on current time
+      if (config.testMode.enabled) {
+        logger.warn(`🧪 TEST MODE ENABLED - Using current time for reminder checks (NOT FOR PRODUCTION)`);
+        return this.shouldSendReminderTestMode(setting, user, hebcalData, dateStr);
+      }
+
+      // PRODUCTION MODE: Normal timezone-based logic
       let eventTime: string | null = null;
 
       // Get event time based on reminder type
@@ -224,6 +283,137 @@ export class ReminderScheduler {
       );
     } catch (error) {
       logger.error("Error checking if should send reminder:", error);
+      return false;
+    }
+  }
+
+  /**
+   * TEST MODE: Check if reminder should be sent based on current time
+   * This bypasses timezone calculations and triggers reminders based on current time
+   * ONLY FOR TESTING - NOT FOR PRODUCTION
+   */
+  private async shouldSendReminderTestMode(
+    setting: ReminderSetting,
+    user: User,
+    hebcalData: any,
+    dateStr: string
+  ): Promise<boolean> {
+    try {
+      // Get current time in Israel timezone (Asia/Jerusalem) for test mode
+      const now = new Date();
+      const israelTimeString = now.toLocaleString("en-US", {
+        timeZone: "Asia/Jerusalem",  // ✅ Use Israel time
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+      
+      const [currentHour, currentMinute] = israelTimeString.split(":").map(Number);
+      const currentTimeMinutes = currentHour * 60 + currentMinute;
+      
+      logger.debug(
+        `🧪 TEST MODE: Current time in Israel: ${currentHour}:${String(currentMinute).padStart(2, "0")} (${currentTimeMinutes} min)`
+      );
+
+      // TEST MODE: If manual test_time is set, use it instead of calculating
+      if (setting.test_time) {
+        logger.debug(
+          `🧪 TEST MODE: Found test_time="${setting.test_time}" for reminder ${setting.id} (${setting.reminder_type}) for ${user.phone_number}`
+        );
+        
+        const [testHours, testMinutes] = setting.test_time.split(":").map(Number);
+        if (isNaN(testHours) || isNaN(testMinutes)) {
+          logger.error(
+            `🧪 TEST MODE: Invalid test_time format "${setting.test_time}" for reminder ${setting.id}`
+          );
+          return false;
+        }
+        
+        const testTimeMinutes = testHours * 60 + testMinutes;
+        
+        // For testing: trigger exactly when test_time arrives or has passed
+        // No window, no delay - just check if current time >= test_time
+        const shouldTrigger = currentTimeMinutes >= testTimeMinutes;
+        
+        logger.info(
+          `🧪 TEST MODE: Checking reminder ${setting.id} - ` +
+          `Current: ${currentHour}:${String(currentMinute).padStart(2, "0")} (${currentTimeMinutes} min), ` +
+          `Test Time: ${setting.test_time} (${testTimeMinutes} min), ` +
+          `Time has ${shouldTrigger ? 'PASSED' : 'NOT YET COME'}, ` +
+          `Should Trigger: ${shouldTrigger}`
+        );
+        
+        if (shouldTrigger) {
+          logger.info(
+            `🧪 TEST MODE: ✅ TRIGGERING reminder for ${user.phone_number} - ` +
+            `Test time ${setting.test_time} has arrived! ` +
+            `Current: ${currentHour}:${String(currentMinute).padStart(2, "0")}`
+          );
+        }
+        
+        return shouldTrigger;
+      }
+
+      // Otherwise, use calculated time (existing logic)
+      // Get event time based on reminder type
+      let eventTime: string | null = null;
+
+      switch (setting.reminder_type) {
+        case "tefillin":
+          eventTime = await hebcalService.getTefilinTime(
+            user.location || "Jerusalem",
+            dateStr
+          );
+          break;
+        case "candle_lighting":
+          // In test mode, trigger on any day if it's around 8:00 AM
+          return currentHour === 8 && currentMinute >= 0 && currentMinute < config.testMode.triggerWindowMinutes;
+        case "shema":
+          eventTime = await hebcalService.getShemaTime(
+            user.location || "Jerusalem",
+            dateStr
+          );
+          break;
+        default:
+          return false;
+      }
+
+      if (!eventTime) {
+        return false;
+      }
+
+      // Parse event time (format: "HH:MM")
+      const [eventHours, eventMinutes] = eventTime.split(":").map(Number);
+      const eventTimeMinutes = eventHours * 60 + eventMinutes;
+
+      // Calculate reminder time in minutes (add offset: negative = before, positive = after)
+      const reminderTimeMinutes = eventTimeMinutes + setting.time_offset_minutes;
+
+      // In test mode: trigger exactly when reminder time arrives or has passed (no window)
+      const shouldTrigger = currentTimeMinutes >= reminderTimeMinutes;
+
+      logger.info(
+        `🧪 TEST MODE: Checking reminder ${setting.id} (calculated) - ` +
+        `Current: ${currentHour}:${String(currentMinute).padStart(2, "0")} (${currentTimeMinutes} min), ` +
+        `Event Time: ${eventTime} (${eventTimeMinutes} min), ` +
+        `Offset: ${setting.time_offset_minutes} min, ` +
+        `Reminder Time: ${Math.floor(reminderTimeMinutes / 60)}:${String(reminderTimeMinutes % 60).padStart(2, "0")} (${reminderTimeMinutes} min), ` +
+        `Time has ${shouldTrigger ? 'PASSED' : 'NOT YET COME'}, ` +
+        `Should Trigger: ${shouldTrigger}`
+      );
+
+      if (shouldTrigger) {
+        logger.info(
+          `🧪 TEST MODE: ✅ TRIGGERING reminder for ${user.phone_number} - ` +
+          `Reminder time has arrived! ` +
+          `Current: ${currentHour}:${String(currentMinute).padStart(2, "0")}, ` +
+          `Calculated Reminder: ${Math.floor(reminderTimeMinutes / 60)}:${String(reminderTimeMinutes % 60).padStart(2, "0")}`
+        );
+      }
+
+      return shouldTrigger;
+    } catch (error) {
+      logger.error("Error in test mode reminder check:", error);
       return false;
     }
   }

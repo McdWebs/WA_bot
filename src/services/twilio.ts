@@ -80,14 +80,18 @@ export class TwilioService {
         messagePayload.contentVariables = JSON.stringify(numberedVariables);
       }
 
+      const templateSendStart = Date.now();
       logger.info(
-        `Sending template ${templateKey} (SID: ${templateSid}) to ${to}`
+        `📤 Sending template ${templateKey} (SID: ${templateSid}) to ${to} at ${new Date(templateSendStart).toISOString()}`
       );
 
       const result = await client.messages.create(messagePayload);
 
+      const templateSendEnd = Date.now();
+      const templateSendLatency = templateSendEnd - templateSendStart;
+      
       logger.info(
-        `Template message sent to ${to}: ${result.sid}, status: ${result.status}`
+        `✅ Template sent to ${to} in ${templateSendLatency}ms: ${result.sid}, status: ${result.status} at ${new Date(templateSendEnd).toISOString()}`
       );
 
       // Check for ANY error code, not just 63027

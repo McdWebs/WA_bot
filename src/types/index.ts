@@ -19,6 +19,7 @@ export interface ReminderSetting {
   reminder_type: ReminderType;
   enabled: boolean;
   time_offset_minutes: number; // negative = before, positive = after
+  test_time?: string; // TEST MODE ONLY: Manual test time in "HH:MM" format (e.g., "13:50")
   created_at?: string;
   updated_at?: string;
 }

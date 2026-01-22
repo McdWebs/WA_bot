@@ -21,7 +21,6 @@ export class MessageHandler {
     // Check if it's a single digit (1-9) which is common for menu buttons
     // Also check for "1." or "1:" patterns that might come from templates
     if (/^[1-9][\.:]?$/.test(normalized) || /^[1-9]\s*[\.:]/.test(normalized)) {
-      logger.info(`Detected button click pattern: "${normalized}"`);
       return true;
     }
 
@@ -34,11 +33,7 @@ export class MessageHandler {
       /^option\s*[1-9]/i,
     ];
 
-    const isMatch = buttonPatterns.some((pattern) => pattern.test(normalized));
-    if (isMatch) {
-      logger.info(`Detected button click pattern: "${normalized}"`);
-    }
-    return isMatch;
+    return buttonPatterns.some((pattern) => pattern.test(normalized));
   }
 
   async handleIncomingMessage(
@@ -46,7 +41,9 @@ export class MessageHandler {
     messageBody: string
   ): Promise<string> {
     try {
+      // Normalize message - trim and lowercase (Hebrew doesn't change with lowercase)
       const normalizedMessage = messageBody.trim().toLowerCase();
+      const originalMessage = messageBody.trim();
 
       // Handle commands
       if (normalizedMessage.startsWith("/")) {
@@ -121,17 +118,89 @@ export class MessageHandler {
         return ""; // Template sent
       }
 
+      // Check for "Show Reminders" text command (check both normalized and original)
+      if (originalMessage.includes("הצג תזכורות") || 
+          normalizedMessage.includes("הצג תזכורות") ||
+          (originalMessage.includes("הצג") && originalMessage.includes("תזכורות")) ||
+          (normalizedMessage.includes("הצג") && normalizedMessage.includes("תזכורות")) ||
+          normalizedMessage === "show_reminders") {
+        logger.debug(`📋 Text command matched: "הצג תזכורות" for ${phoneNumber}`);
+        // Send loading message immediately for better UX
+        await twilioService.sendMessage(phoneNumber, "⏳ טוען את התזכורות שלך...");
+        const reminderService = (await import("../services/reminderService")).default;
+        const result = await reminderService.listReminders(phoneNumber);
+        if (result && result.trim() !== "") {
+          await twilioService.sendMessage(phoneNumber, result);
+        }
+        return "";
+      }
+
+      // Check if this is a time picker selection that came as text (fallback for non-interactive buttons)
+      // Sometimes Twilio sends time picker selections as text messages
+      const creatingReminderType = this.getCreatingReminderType(phoneNumber);
+      if (creatingReminderType && /^(10|20|30|45|60)$/.test(normalizedMessage)) {
+        logger.info(
+          `⏰ Time picker selection detected as TEXT message: "${normalizedMessage}" for ${phoneNumber}, reminderType="${creatingReminderType}"`
+        );
+        // Send loading message for better UX
+        await twilioService.sendMessage(phoneNumber, "⏳ שומר את התזכורת...");
+        await this.saveReminderFromTimePicker(
+          phoneNumber,
+          creatingReminderType,
+          normalizedMessage
+        );
+        return "";
+      }
+
+      // Check for text-based reminder type selection (check both normalized and original)
+      if (originalMessage.includes("תפילין") || 
+          normalizedMessage.includes("תפילין") ||
+          normalizedMessage.includes("tefillin")) {
+        logger.debug(`📋 Text command matched: "תפילין" for ${phoneNumber}`);
+        this.creatingReminderType.set(phoneNumber, "tefillin");
+        await this.sendCityPicker(phoneNumber);
+        return "";
+      } else if (originalMessage.includes("הדלקת נרות") || 
+                 originalMessage.includes("נרות") ||
+                 normalizedMessage.includes("הדלקת נרות") ||
+                 normalizedMessage.includes("נרות") ||
+                 normalizedMessage.includes("candle") ||
+                 normalizedMessage.includes("candle_lighting")) {
+        logger.debug(`📋 Text command matched: "הדלקת נרות" for ${phoneNumber}`);
+        this.creatingReminderType.set(phoneNumber, "candle_lighting");
+        await this.sendCityPicker(phoneNumber);
+        return "";
+      } else if (originalMessage.includes("שמע") || 
+                 originalMessage.includes("קריאת שמע") ||
+                 normalizedMessage.includes("שמע") ||
+                 normalizedMessage.includes("קריאת שמע") ||
+                 normalizedMessage.includes("shema")) {
+        logger.debug(`📋 Text command matched: "שמע" for ${phoneNumber}`);
+        this.creatingReminderType.set(phoneNumber, "shema");
+        await this.sendShemaTimePicker(phoneNumber);
+        return "";
+      }
+
       // Check for text-based actions
-      if (normalizedMessage.includes("תזכורת חדשה") || normalizedMessage.includes("חדשה")) {
+      if (originalMessage.includes("תזכורת חדשה") || 
+          originalMessage.includes("חדשה") ||
+          originalMessage.includes("הוסף תזכורת") ||
+          normalizedMessage.includes("תזכורת חדשה") ||
+          normalizedMessage.includes("חדשה") ||
+          normalizedMessage.includes("הוסף תזכורת") ||
+          normalizedMessage === "add_reminder") {
         const gender: Gender = (user.gender as Gender) || "prefer_not_to_say";
         await this.sendMainMenu(phoneNumber, gender);
         return "";
-      } else if (normalizedMessage.includes("חזרה") || normalizedMessage.includes("back")) {
+      } else if (originalMessage.includes("חזרה") || 
+                 normalizedMessage.includes("חזרה") ||
+                 normalizedMessage.includes("back")) {
         await this.sendManageRemindersMenu(phoneNumber);
         return "";
       }
 
       // Default: show manage reminders menu
+      logger.debug(`📋 No text command matched for "${originalMessage}" (normalized: "${normalizedMessage}"), showing default menu`);
       await this.sendManageRemindersMenu(phoneNumber);
       return ""; // Template sent
     } catch (error) {
@@ -180,7 +249,7 @@ export class MessageHandler {
         // No variables - Quick Reply templates have static button text
       );
 
-      logger.info(`Main menu template sent to ${phoneNumber}`);
+      logger.debug(`Main menu template sent to ${phoneNumber}`);
     } catch (error: any) {
       logger.error(`Error sending main menu to ${phoneNumber}:`, error);
       
@@ -199,7 +268,7 @@ export class MessageHandler {
         }
 
         await twilioService.sendMessage(phoneNumber, menuText);
-        logger.info(`✅ Fallback menu sent to ${phoneNumber}`);
+        logger.debug(`Fallback menu sent to ${phoneNumber}`);
       } catch (fallbackError) {
         logger.error(`❌ Failed to send fallback menu to ${phoneNumber}:`, fallbackError);
         throw fallbackError;
@@ -212,9 +281,9 @@ export class MessageHandler {
    */
   private async sendManageRemindersMenu(phoneNumber: string): Promise<void> {
     try {
-      logger.info(`🧩 Sending manage reminders menu to ${phoneNumber}`);
+      logger.debug(`Sending manage reminders menu to ${phoneNumber}`);
       await twilioService.sendTemplateMessage(phoneNumber, "manageReminders");
-      logger.info(`Manage reminders menu sent to ${phoneNumber}`);
+      logger.debug(`Manage reminders menu sent to ${phoneNumber}`);
     } catch (error) {
       logger.error(
         `Error sending manage reminders menu to ${phoneNumber}:`,
@@ -261,7 +330,13 @@ export class MessageHandler {
         .replace(/^[1-9]\s*/, "");
 
       logger.info(
-        `Button identifier: "${buttonIdentifier}", normalized: "${normalizedButton}", clean: "${cleanButton}"`
+        `🔍 Button parsing for ${phoneNumber}: original="${buttonIdentifier}", normalized="${normalizedButton}", clean="${cleanButton}"`
+      );
+      
+      // Check creatingReminderType BEFORE processing
+      const creatingReminderType = this.getCreatingReminderType(phoneNumber);
+      logger.info(
+        `📋 Current creatingReminderType for ${phoneNumber}: "${creatingReminderType}"`
       );
 
       // Check if this is a gender selection (from gender question template)
@@ -290,12 +365,26 @@ export class MessageHandler {
       // Check if this is a time selection from a time picker template
       // For tefillin: "30", "45", "60" (minutes before)
       // For shema: "10", "20", "60" (minutes before)
+      // Also check cleanButton in case there's formatting like "1. 10" or "10."
+      // Also check original buttonIdentifier in case normalization changed it
       const isTimePickerSelection =
         normalizedButton === "30" ||
         normalizedButton === "45" ||
         normalizedButton === "60" ||
         normalizedButton === "10" ||
-        normalizedButton === "20";
+        normalizedButton === "20" ||
+        cleanButton === "30" ||
+        cleanButton === "45" ||
+        cleanButton === "60" ||
+        cleanButton === "10" ||
+        cleanButton === "20" ||
+        /^(10|20|30|45|60)$/.test(normalizedButton) ||
+        /^(10|20|30|45|60)$/.test(cleanButton) ||
+        /^(10|20|30|45|60)$/.test(buttonIdentifier.trim());
+      
+      logger.info(
+        `⏰ Time picker check for ${phoneNumber}: isTimePickerSelection=${isTimePickerSelection}, button="${buttonIdentifier}", normalized="${normalizedButton}", clean="${cleanButton}"`
+      );
 
       // Check if this is a city selection
       const isCitySelection =
@@ -319,7 +408,7 @@ export class MessageHandler {
           status: "active",
         });
 
-        logger.info(`✅ Gender saved for ${phoneNumber}: ${gender}`);
+        logger.debug(`Gender saved for ${phoneNumber}: ${gender}`);
         await this.sendMainMenu(phoneNumber, gender);
       } else if (isMainMenuSelection) {
         // User selected reminder type from main menu
@@ -342,6 +431,8 @@ export class MessageHandler {
           // Main menu button to open the manage reminders menu
           await this.sendManageRemindersMenu(phoneNumber);
         } else if (normalizedButton === "show_reminders") {
+          // Send loading message immediately for better UX
+          await twilioService.sendMessage(phoneNumber, "⏳ טוען את התזכורות שלך...");
           // Use ReminderService to list reminders
           const result = await reminderService.listReminders(phoneNumber);
           if (result && result.trim() !== "") {
@@ -406,6 +497,9 @@ export class MessageHandler {
             };
             const offsetMinutes = timeOffsetMap[buttonIdentifier] ?? 0;
             
+            // Send loading message for better UX
+            await twilioService.sendMessage(phoneNumber, "⏳ מעדכן את התזכורת...");
+            
             const result = await reminderService.updateReminderOffset(
               phoneNumber,
               state.reminderId,
@@ -422,11 +516,51 @@ export class MessageHandler {
         } else {
           // Creating new reminder - need to know which type
           const creatingReminderType = this.getCreatingReminderType(phoneNumber);
+          logger.info(
+            `⏰ Time picker selection detected: button="${buttonIdentifier}", normalized="${normalizedButton}", creatingReminderType="${creatingReminderType}" for ${phoneNumber}`
+          );
           if (creatingReminderType) {
-            await this.saveReminderFromTimePicker(
+            // Extract time ID from button - try normalized first, then clean, then extract number
+            let timeId = normalizedButton;
+            if (!/^(10|20|30|45|60)$/.test(timeId)) {
+              timeId = cleanButton;
+            }
+            if (!/^(10|20|30|45|60)$/.test(timeId)) {
+              // Try to extract number from button identifier
+              const numberMatch = buttonIdentifier.match(/\b(10|20|30|45|60)\b/);
+              if (numberMatch) {
+                timeId = numberMatch[1];
+              }
+            }
+            
+            logger.info(
+              `💾 Extracted timeId: "${timeId}" from button="${buttonIdentifier}" for ${phoneNumber}`
+            );
+            
+            if (/^(10|20|30|45|60)$/.test(timeId)) {
+              // Send loading message for better UX
+              await twilioService.sendMessage(phoneNumber, "⏳ שומר את התזכורת...");
+              await this.saveReminderFromTimePicker(
+                phoneNumber,
+                creatingReminderType,
+                timeId
+              );
+            } else {
+              logger.error(
+                `❌ Invalid timeId extracted: "${timeId}" from button="${buttonIdentifier}" for ${phoneNumber}`
+              );
+              await twilioService.sendMessage(
+                phoneNumber,
+                "❌ שגיאה: לא זוהה זמן תקין. אנא נסה שוב."
+              );
+            }
+          } else {
+            logger.warn(
+              `⚠️ Time picker selection but no creatingReminderType found for ${phoneNumber}. Button: "${buttonIdentifier}"`
+            );
+            await twilioService.sendMessage(
               phoneNumber,
-              creatingReminderType,
-              buttonIdentifier
+              "❌ שגיאה: לא זוהה סוג התזכורת. אנא התחל מחדש מהתפריט הראשי."
             );
           }
         }
@@ -507,9 +641,7 @@ export class MessageHandler {
     location: string
   ): Promise<void> {
     try {
-      logger.info(
-        `🌅 Preparing to send time picker template to ${phoneNumber} for location: ${location}`
-      );
+      logger.debug(`Preparing time picker for ${phoneNumber}, location: ${location}`);
 
       // Validate location - if it's invalid or too short, infer from phone number
       let validLocation = location;
@@ -527,9 +659,7 @@ export class MessageHandler {
       if (!sunsetData) {
         const inferredLocation = this.inferLocationFromPhoneNumber(phoneNumber);
         if (inferredLocation !== validLocation) {
-          logger.info(
-            `Trying inferred location "${inferredLocation}" as fallback`
-          );
+          logger.debug(`Trying inferred location "${inferredLocation}" as fallback`);
           sunsetData = await hebcalService.getSunsetData(inferredLocation);
           if (sunsetData) {
             validLocation = inferredLocation;
@@ -662,7 +792,7 @@ export class MessageHandler {
                 : "");
 
             await twilioService.sendMessage(phoneNumber, formattedMessage);
-            logger.info(`Sent formatted message as fallback to ${phoneNumber}`);
+            logger.debug(`Sent formatted message as fallback to ${phoneNumber}`);
           }
         } else {
           throw templateError;
@@ -689,7 +819,7 @@ export class MessageHandler {
     locationOverride?: string
   ): Promise<void> {
     try {
-      logger.info(`📿 Sending tefillin time picker to ${phoneNumber}`);
+      logger.debug(`Sending tefillin time picker to ${phoneNumber}`);
       this.creatingReminderType.set(phoneNumber, "tefillin");
 
       // Determine base location: prefer explicit override, then saved user.location, then inferred city
@@ -713,8 +843,8 @@ export class MessageHandler {
         "tefillinTimePicker",
         templateVariables
       );
-      logger.info(
-        `Tefilin time picker (V2) sent to ${phoneNumber} with sunset ${sunsetTime} for location ${baseLocation}`
+      logger.debug(
+        `Tefilin time picker sent to ${phoneNumber} with sunset ${sunsetTime}`
       );
     } catch (error) {
       logger.error(
@@ -734,7 +864,7 @@ export class MessageHandler {
    */
   private async sendCityPicker(phoneNumber: string): Promise<void> {
     try {
-      logger.info(`🕯️ Sending city picker to ${phoneNumber}`);
+      logger.debug(`Sending city picker to ${phoneNumber}`);
       // Get list of cities from Hebcal (common cities)
       // For now, using a predefined list - can be enhanced to fetch from API
       const cities = [
@@ -758,7 +888,7 @@ export class MessageHandler {
         "cityPicker",
         templateVariables
       );
-      logger.info(`City picker sent to ${phoneNumber}`);
+      logger.debug(`City picker sent to ${phoneNumber}`);
     } catch (error) {
       logger.error(`Error sending city picker to ${phoneNumber}:`, error);
       // Fallback
@@ -774,7 +904,7 @@ export class MessageHandler {
    */
   private async sendShemaTimePicker(phoneNumber: string): Promise<void> {
     try {
-      logger.info(`📖 Sending shema time picker to ${phoneNumber}`);
+      logger.debug(`Sending shema time picker to ${phoneNumber}`);
       this.creatingReminderType.set(phoneNumber, "shema");
 
       // Determine base location: use user's saved location if available, otherwise infer from phone
@@ -797,7 +927,7 @@ export class MessageHandler {
         "shemaTimePicker",
         templateVariables
       );
-      logger.info(`Shema time picker sent to ${phoneNumber}`);
+      logger.debug(`Shema time picker sent to ${phoneNumber}`);
     } catch (error) {
       logger.error(`Error sending shema time picker to ${phoneNumber}:`, error);
       // Fallback
@@ -817,9 +947,14 @@ export class MessageHandler {
     timeId: string
   ): Promise<void> {
     try {
+      logger.info(
+        `💾 Attempting to save reminder: type="${reminderType}", timeId="${timeId}" for ${phoneNumber}`
+      );
+      
       // Ensure user exists – create if missing (e.g. user came in via templates only)
       let user = await mongoService.getUserByPhone(phoneNumber);
       if (!user) {
+        logger.info(`👤 Creating new user for ${phoneNumber}`);
         user = await mongoService.createUser({
           phone_number: phoneNumber,
           status: "active",
@@ -828,9 +963,11 @@ export class MessageHandler {
           gender: undefined,
         });
       }
-      if (!user.id) {
-        throw new Error("User not found");
+      if (!user || !user.id) {
+        throw new Error(`User not found or missing ID for ${phoneNumber}`);
       }
+
+      logger.info(`✅ User found: ${phoneNumber}, user_id: ${user.id}`);
 
       const timeOffsetMap: Record<string, number> = {
         "10": -10,
@@ -841,13 +978,20 @@ export class MessageHandler {
       };
 
       const timeOffsetMinutes = timeOffsetMap[timeId] ?? 0;
+      logger.info(
+        `⏰ Mapped timeId "${timeId}" to offset ${timeOffsetMinutes} minutes`
+      );
 
-      await mongoService.upsertReminderSetting({
+      const reminderData = {
         user_id: user.id,
         reminder_type: reminderType,
         enabled: true,
         time_offset_minutes: timeOffsetMinutes,
-      });
+      };
+      
+      logger.info(`💾 Saving reminder to DB:`, reminderData);
+      const savedReminder = await mongoService.upsertReminderSetting(reminderData);
+      logger.info(`✅ Reminder saved successfully:`, savedReminder);
 
       this.creatingReminderType.delete(phoneNumber);
 
@@ -1003,7 +1147,7 @@ export class MessageHandler {
         `✅ התזכורת עודכנה בהצלחה!\n\n📌 סוג: ${typeNames[reminderType]}`
       );
 
-      logger.info(`✅ Reminder ${reminderId} updated for ${phoneNumber}`);
+      logger.debug(`Reminder ${reminderId} updated for ${phoneNumber}`);
     } catch (error) {
       logger.error(
         `Error updating reminder ${reminderId} for ${phoneNumber}:`,
@@ -1044,6 +1188,8 @@ export class MessageHandler {
       }
 
       if (normalized === "כן" || normalized === "yes" || normalized === "אישור") {
+        // Send loading message for better UX
+        await twilioService.sendMessage(phoneNumber, "⏳ מוחק את התזכורת...");
         // Delete the reminder using ReminderService
         const result = await reminderService.deleteReminder(phoneNumber, state.reminderId);
         

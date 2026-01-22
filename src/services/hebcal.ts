@@ -59,6 +59,7 @@ export class HebcalService {
         config.hebcal.apiBaseUrl,
         {
           params,
+          timeout: 5000, // 5 second timeout to prevent hanging
         }
       );
 
@@ -94,6 +95,7 @@ export class HebcalService {
         "https://www.hebcal.com/zmanim",
         {
           params,
+          timeout: 5000, // 5 second timeout to prevent hanging
         }
       );
 

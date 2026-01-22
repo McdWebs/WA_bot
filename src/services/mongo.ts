@@ -46,19 +46,60 @@ async function getReminderPreferencesCollection(): Promise<
 }
 
 export class MongoService {
+  // User cache: phoneNumber -> { user: User, timestamp: number }
+  private userCache = new Map<string, { user: User; timestamp: number }>();
+  private readonly USER_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  /**
+   * Clears user cache for a specific phone number
+   */
+  private clearUserCache(phoneNumber: string): void {
+    this.userCache.delete(phoneNumber);
+  }
+
+  /**
+   * Gets cached user if available and not expired
+   */
+  private getCachedUser(phoneNumber: string): User | null {
+    const cached = this.userCache.get(phoneNumber);
+    if (cached && Date.now() - cached.timestamp < this.USER_CACHE_TTL) {
+      logger.debug(`User cache hit for ${phoneNumber}`);
+      return cached.user;
+    }
+    if (cached) {
+      this.userCache.delete(phoneNumber); // Expired, remove it
+    }
+    return null;
+  }
+
   // User operations
   async getUserByPhone(phoneNumber: string): Promise<User | null> {
     try {
+      // Check cache first
+      const cached = this.getCachedUser(phoneNumber);
+      if (cached) {
+        return cached;
+      }
+
+      // Cache miss - fetch from DB
       const users = await getUsersCollection();
       const result = await users.findOne({ phone_number: phoneNumber });
       if (!result) return null;
 
       // Normalize Mongo document → User shape with string `id`
       const u: any = result;
-      return {
+      const user: User = {
         ...u,
         id: u.id || u._id?.toString(),
       };
+
+      // Store in cache
+      this.userCache.set(phoneNumber, {
+        user,
+        timestamp: Date.now(),
+      });
+
+      return user;
     } catch (error) {
       logger.error("Error fetching user by phone (Mongo):", error);
       throw error;
@@ -77,10 +118,18 @@ export class MongoService {
         updated_at: now,
       };
       const result = await users.insertOne(doc as any);
-      return {
+      const createdUser: User = {
         ...doc,
         id: result.insertedId.toString(),
       };
+
+      // Update cache with new user
+      this.userCache.set(user.phone_number, {
+        user: createdUser,
+        timestamp: Date.now(),
+      });
+
+      return createdUser;
     } catch (error) {
       logger.error("Error creating user (Mongo):", error);
       throw error;
@@ -113,10 +162,18 @@ export class MongoService {
       }
 
       const user = value as User & { _id?: any };
-      return {
+      const updatedUser: User = {
         ...user,
         id: user.id || user._id?.toString(),
       };
+
+      // Update cache with updated user
+      this.userCache.set(phoneNumber, {
+        user: updatedUser,
+        timestamp: Date.now(),
+      });
+
+      return updatedUser;
     } catch (error) {
       logger.error("Error updating user (Mongo):", error);
       throw error;
@@ -292,8 +349,37 @@ export class MongoService {
         {
           $lookup: {
             from: "users",
-            localField: "user_id",
-            foreignField: "id",
+            let: { reminderUserId: "$user_id" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $or: [
+                      // Match _id as ObjectId (convert string user_id to ObjectId)
+                      {
+                        $eq: [
+                          "$_id",
+                          {
+                            $cond: {
+                              if: {
+                                $and: [
+                                  { $eq: [{ $type: "$$reminderUserId" }, "string"] },
+                                  { $eq: [{ $strLenCP: "$$reminderUserId" }, 24] },
+                                ],
+                              },
+                              then: { $toObjectId: "$$reminderUserId" },
+                              else: "$$reminderUserId",
+                            },
+                          },
+                        ],
+                      },
+                      // Also try matching id field (if it exists as string)
+                      { $eq: ["$id", "$$reminderUserId"] },
+                    ],
+                  },
+                },
+              },
+            ],
             as: "users",
           },
         },
@@ -301,11 +387,36 @@ export class MongoService {
         { $match: { "users.status": "active" } },
       ];
 
+      logger.info(`🧪 TEST MODE: Executing MongoDB aggregation pipeline for active reminders`);
       const result = await reminders.aggregate(pipeline).toArray();
+      logger.info(`🧪 TEST MODE: MongoDB query returned ${result.length} result(s)`);
+      
+      // Log details about what was found
+      if (result.length > 0) {
+        result.forEach((doc: any) => {
+          logger.info(
+            `🧪 TEST MODE: Found reminder ${doc._id} (${doc.reminder_type}) ` +
+            `for user ${doc.users?.phone_number || 'unknown'}, ` +
+            `test_time: ${doc.test_time || 'none'}, enabled: ${doc.enabled}`
+          );
+        });
+      } else {
+        // Debug: Check if there are any reminders at all
+        const allReminders = await reminders.find({}).toArray();
+        logger.info(`🧪 TEST MODE: Total reminders in DB: ${allReminders.length}`);
+        if (allReminders.length > 0) {
+          allReminders.forEach((r: any) => {
+            logger.info(
+              `🧪 TEST MODE: Reminder ${r._id} - enabled: ${r.enabled}, ` +
+              `user_id: ${r.user_id}, test_time: ${r.test_time || 'none'}`
+            );
+          });
+        }
+      }
 
       return result.map((doc: any) => {
         const { users: user, ...reminder } = doc;
-        return {
+        const mappedReminder = {
           ...(reminder as ReminderSetting),
           id: reminder.id || reminder._id?.toString(),
           users: {
@@ -313,6 +424,15 @@ export class MongoService {
             id: user.id || user._id?.toString(),
           },
         };
+        
+        // Log test_time if present for debugging
+        if (mappedReminder.test_time) {
+          logger.debug(
+            `🧪 TEST MODE: Reminder ${mappedReminder.id} has test_time="${mappedReminder.test_time}"`
+          );
+        }
+        
+        return mappedReminder;
       });
     } catch (error) {
       logger.error("Error fetching active reminder settings (Mongo):", error);

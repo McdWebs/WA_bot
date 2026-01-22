@@ -114,7 +114,8 @@ export class TimezoneService {
   calculateReminderTime(eventTime: string, offsetMinutes: number): string {
     try {
       const [hours, minutes] = eventTime.split(":").map(Number);
-      const totalMinutes = hours * 60 + minutes - offsetMinutes;
+      // FIX: ADD offset instead of subtracting (negative = before, positive = after)
+      const totalMinutes = hours * 60 + minutes + offsetMinutes;
 
       const reminderHours = Math.floor(totalMinutes / 60);
       const reminderMins = totalMinutes % 60;

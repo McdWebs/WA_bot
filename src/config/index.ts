@@ -45,6 +45,13 @@ export const config = {
   defaultTimezone: process.env.DEFAULT_TIMEZONE || "Asia/Jerusalem",
   logLevel: process.env.LOG_LEVEL || "info",
   webhookUrl: process.env.WEBHOOK_URL || "",
+  
+  // TEST MODE: Enable test reminders based on current time (NOT FOR PRODUCTION)
+  testMode: {
+    enabled: process.env.ENABLE_TEST_REMINDERS === "true",
+    // In test mode, trigger reminder if current time is within this many minutes of reminder time
+    triggerWindowMinutes: parseInt(process.env.TEST_REMINDER_WINDOW_MINUTES || "5", 10),
+  },
 };
 
 // Validate required environment variables
