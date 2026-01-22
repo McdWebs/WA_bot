@@ -72,7 +72,7 @@ export class ReminderService {
         reminders,
       });
 
-      message += `\nשלח/י מספר תזכורת (1-${activeReminders.length}) לעריכה או מחיקה.`;
+      message += `\nשלח/י מספר תזכורת (1-${activeReminders.length}) לעריכה או מחיקה.\n❌ *ביטול* - לחזרה לתפריט הראשי`;
 
       return message;
     } catch (error) {
@@ -92,10 +92,18 @@ export class ReminderService {
         return "אנא בחר/י תזכורת מהרשימה תחילה.";
       }
 
+      // Check for cancel first
+      const normalizedInput = numberInput.toLowerCase().trim();
+      if (normalizedInput.includes("ביטול") || normalizedInput.includes("cancel")) {
+        reminderStateManager.clearState(phoneNumber);
+        // Return empty string - handler will send manage reminders menu template
+        return "";
+      }
+
       // Extract number from input
       const numberMatch = numberInput.match(/^(\d+)/);
       if (!numberMatch) {
-        return "אנא שלח/י מספר תזכורת (1, 2, 3 וכו').";
+        return "אנא שלח/י מספר תזכורת (1, 2, 3 וכו') או ❌ *ביטול* לחזרה לתפריט.";
       }
 
       const selectedIndex = parseInt(numberMatch[1], 10);
@@ -139,7 +147,7 @@ export class ReminderService {
         timeText = `${minutes} דקות אחרי סוף זמן`;
       }
 
-      return `📌 תזכורת נבחרה:\n\n${typeNameHeb} – ${timeText}\n\nמה תרצה לעשות?\n\nשלח/י:\n✏️ *ערוך* - לעריכת התזכורת\n🗑️ *מחק* - למחיקת התזכורת\n🔙 *חזרה* - חזרה לרשימה`;
+      return `📌 תזכורת נבחרה:\n\n${typeNameHeb} – ${timeText}\n\nמה תרצה לעשות?\n\nשלח/י:\n✏️ *ערוך* - לעריכת התזכורת\n🗑️ *מחק* - למחיקת התזכורת\n❌ *ביטול* - לחזרה לתפריט הראשי`;
     } catch (error) {
       logger.error("Error selecting reminder:", error);
       return "סליחה, אירעה שגיאה. נסה שוב.";
@@ -152,7 +160,7 @@ export class ReminderService {
    */
   async handleReminderAction(
     phoneNumber: string,
-    action: "edit" | "delete" | "back"
+    action: "edit" | "delete" | "cancel"
   ): Promise<string> {
     try {
       // Validate state
@@ -166,10 +174,11 @@ export class ReminderService {
         return "❌ לא נמצאה תזכורת. אנא בחר/י תזכורת מהרשימה.";
       }
 
-      if (action === "back") {
-        // Return to list
+      if (action === "cancel") {
+        // Cancel and return to manage reminders menu
         reminderStateManager.clearState(phoneNumber);
-        return await this.listReminders(phoneNumber);
+        // Return empty string - handler will send manage reminders menu template
+        return "";
       } else if (action === "delete") {
         // Transition to CONFIRMING_DELETE mode
         const user = await mongoService.getUserByPhone(phoneNumber);

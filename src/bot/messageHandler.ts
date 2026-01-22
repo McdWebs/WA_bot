@@ -54,6 +54,13 @@ export class MessageHandler {
       const state = reminderStateManager.getState(phoneNumber);
       
       if (state?.mode === ReminderStateMode.CHOOSE_REMINDER) {
+        // Check for cancel
+        if (normalizedMessage.includes("ביטול") || normalizedMessage.includes("cancel")) {
+          reminderStateManager.clearState(phoneNumber);
+          await this.sendManageRemindersMenu(phoneNumber);
+          return "";
+        }
+        
         // User is selecting a reminder by number (1, 2, 3...)
         const result = await reminderService.selectReminder(phoneNumber, messageBody);
         if (result) {
@@ -61,16 +68,16 @@ export class MessageHandler {
         }
         return "";
       } else if (state?.mode === ReminderStateMode.REMINDER_ACTION) {
-        // User selected a reminder and now choosing action (edit/delete/back)
+        // User selected a reminder and now choosing action (edit/delete/back/cancel)
         const normalized = normalizedMessage;
-        let action: "edit" | "delete" | "back" | null = null;
+        let action: "edit" | "delete" | "back" | "cancel" | null = null;
         
         if (normalized.includes("ערוך") || normalized.includes("edit")) {
           action = "edit";
         } else if (normalized.includes("מחק") || normalized.includes("delete")) {
           action = "delete";
-        } else if (normalized.includes("חזרה") || normalized.includes("back")) {
-          action = "back";
+        } else if (normalized.includes("ביטול") || normalized.includes("cancel")) {
+          action = "cancel";
         }
         
         if (action) {
@@ -93,9 +100,13 @@ export class MessageHandler {
               }
             }
           }
+          // If action is "cancel", return to manage reminders menu
+          if (action === "cancel") {
+            await this.sendManageRemindersMenu(phoneNumber);
+          }
           return "";
         } else {
-          return "אנא בחר/י פעולה:\n✏️ *ערוך* - לעריכת התזכורת\n🗑️ *מחק* - למחיקת התזכורת\n🔙 *חזרה* - חזרה לרשימה";
+          return "אנא בחר/י פעולה:\n✏️ *ערוך* - לעריכת התזכורת\n🗑️ *מחק* - למחיקת התזכורת\n❌ *ביטול* - לחזרה לתפריט הראשי";
         }
       } else if (state?.mode === ReminderStateMode.CONFIRMING_DELETE) {
         // User is confirming deletion
