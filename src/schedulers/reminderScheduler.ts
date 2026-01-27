@@ -375,9 +375,9 @@ export class ReminderScheduler {
         
         const testTimeMinutes = testHours * 60 + testMinutes;
         
-        // For testing: trigger exactly when test_time arrives or has passed
-        // No window, no delay - just check if current time >= test_time
-        const shouldTrigger = currentTimeMinutes >= testTimeMinutes;
+        // For testing: trigger ONLY in the exact minute of test_time
+        // This prevents repeated triggers every minute after the time has passed
+        const shouldTrigger = currentTimeMinutes === testTimeMinutes;
         
         logger.info(
           `🧪 TEST MODE: Checking reminder ${setting.id} - ` +
@@ -465,8 +465,9 @@ export class ReminderScheduler {
       // Calculate reminder time in minutes (add offset: negative = before, positive = after)
       const reminderTimeMinutes = eventTimeMinutes + setting.time_offset_minutes;
 
-      // In test mode: trigger exactly when reminder time arrives or has passed (no window)
-      const shouldTrigger = currentTimeMinutes >= reminderTimeMinutes;
+      // In test mode: trigger ONLY in the exact minute of the reminder time
+      // This prevents repeated triggers every minute after the time has passed
+      const shouldTrigger = currentTimeMinutes === reminderTimeMinutes;
 
       logger.info(
         `🧪 TEST MODE: Checking reminder ${setting.id} (calculated) - ` +

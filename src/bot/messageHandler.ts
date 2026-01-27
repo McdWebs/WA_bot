@@ -389,6 +389,7 @@ export class MessageHandler {
       const isManageRemindersAction =
         normalizedButton === "manage_reminders" ||
         normalizedButton === "show_reminders" ||
+        normalizedButton === "reminders" ||
         normalizedButton === "add_reminder" ||
         normalizedButton === "close_menu";
 
@@ -467,7 +468,10 @@ export class MessageHandler {
         if (normalizedButton === "manage_reminders") {
           // Main menu button to open the manage reminders menu
           await this.sendManageRemindersMenu(phoneNumber);
-        } else if (normalizedButton === "show_reminders") {
+        } else if (
+          normalizedButton === "show_reminders" ||
+          normalizedButton === "reminders"
+        ) {
           // Send loading message immediately for better UX
           await twilioService.sendMessage(phoneNumber, "⏳ טוען את התזכורות שלך...");
           // Use ReminderService to list reminders
