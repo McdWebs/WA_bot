@@ -25,21 +25,16 @@ export const config = {
 
   templates: {
     welcome: process.env.WHATSAPP_TEMPLATE_WELCOME!,
-    timePicker: process.env.WHATSAPP_TEMPLATE_TIME_PICKER!,
-    complete: process.env.WHATSAPP_TEMPLATE_COMPLETE_V2 || process.env.WHATSAPP_TEMPLATE_COMPLETE!,
-    completeV2: process.env.WHATSAPP_TEMPLATE_COMPLETE_V2 || "HX4b5d045457d79d96ca84bb5e2739a358",
+    complete: process.env.WHATSAPP_TEMPLATE_COMPLETE || "",
     genderQuestion: process.env.WHATSAPP_TEMPLATE_GENDER_QUESTION_V3 || "",
-    mainMenu: process.env.WHATSAPP_TEMPLATE_MENU_V2 || process.env.WHATSAPP_TEMPLATE_MENU || "",
-    mainMenuV2: process.env.WHATSAPP_TEMPLATE_MENU_V2 || "HX4cdda28f54321bcae515637c282c86fd",
-    tefillinTimePicker:
-      process.env.WHATSAPP_TEMPLATE_TEFILIN_TIME_PICKER_V2 || process.env.WHATSAPP_TEMPLATE_TEFILIN_TIME_PICKER || "",
-    tefillinTimePickerV2: process.env.WHATSAPP_TEMPLATE_TEFILIN_TIME_PICKER_V2 || "HXdac5aa8dfcff00af01ef305e0ce299b5",
+    mainMenu: process.env.WHATSAPP_TEMPLATE_MENU || "",
+    tefillinTimePicker: process.env.WHATSAPP_TEMPLATE_TEFILIN_TIME_PICKER || "",
     cityPicker: process.env.WHATSAPP_TEMPLATE_CITY_PICKER || "",
     shemaTimePicker: process.env.WHATSAPP_TEMPLATE_SHEMA_TIME_PICKER_V2 || "",
     reminderList: process.env.WHATSAPP_TEMPLATE_REMINDER_LIST || "",
-    manageReminders: process.env.WHATSAPP_TEMPLATE_MANAGE_REMINDERS_V2 || process.env.WHATSAPP_TEMPLATE_MANAGE_REMINDERS || "",
-    manageRemindersV2: process.env.WHATSAPP_TEMPLATE_MANAGE_REMINDERS_V2 || "HX1536a6a04eef1dcb6e465c0923f02ac8",
-    candleLightingTimePicker: process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_TIME_PICKER || "HX20fb185c3e7a57ab6abf5852357fa3aa",
+    manageReminders: process.env.WHATSAPP_TEMPLATE_MANAGE_REMINDERS || "",
+    city_picker: process.env.CITY_PICKER || "",
+    candleLightingTimePicker: process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_TIME_PICKER || "",
   },
 
   hebcal: {
@@ -50,7 +45,7 @@ export const config = {
   defaultTimezone: process.env.DEFAULT_TIMEZONE || "Asia/Jerusalem",
   logLevel: process.env.LOG_LEVEL || "info",
   webhookUrl: process.env.WEBHOOK_URL || "",
-  
+
   // TEST MODE: Enable test reminders based on current time (NOT FOR PRODUCTION)
   testMode: {
     enabled: process.env.ENABLE_TEST_REMINDERS === "true",

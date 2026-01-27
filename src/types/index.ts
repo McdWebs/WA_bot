@@ -20,6 +20,7 @@ export interface ReminderSetting {
   enabled: boolean;
   time_offset_minutes: number; // negative = before, positive = after
   test_time?: string; // TEST MODE ONLY: Manual test time in "HH:MM" format (e.g., "13:50")
+  last_sent_at?: string; // ISO timestamp of when this reminder was last sent (prevents duplicates)
   created_at?: string;
   updated_at?: string;
 }

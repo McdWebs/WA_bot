@@ -116,13 +116,42 @@ export class HebcalService {
     date?: string
   ): Promise<string | null> {
     try {
-      // First, get location coordinates from Hebcal calendar API
-      const data = await this.getHebcalData(location, date);
+      // Normalize location to coordinates first – this avoids Hebcal "geo=city"
+      // fallback issues (e.g. Tel Aviv sometimes resolving to Jerusalem).
+      const normalizedLocation = (location || "Jerusalem").trim();
+
+      // Known coordinates for a small set of supported cities
+      const coordMap: Record<
+        string,
+        { latitude: number; longitude: number }
+      > = {
+        Jerusalem: { latitude: 31.7683, longitude: 35.2137 },
+        "Tel Aviv": { latitude: 32.0853, longitude: 34.7818 },
+        "Beer Sheva": { latitude: 31.252973, longitude: 34.791462 },
+        Eilat: { latitude: 29.557669, longitude: 34.951925 },
+        Haifa: { latitude: 32.794046, longitude: 34.989571 },
+      };
+
+      let latitude: number;
+      let longitude: number;
+
+      if (coordMap[normalizedLocation]) {
+        ({ latitude, longitude } = coordMap[normalizedLocation]);
+        logger.info(
+          `Using hardcoded coordinates for ${normalizedLocation}: lat=${latitude}, lon=${longitude}`
+        );
+      } else {
+        // Fallback: get location coordinates from Hebcal calendar API
+        const data = await this.getHebcalData(location, date);
+        latitude = data.location?.latitude || 31.7683; // Default to Jerusalem
+        longitude = data.location?.longitude || 35.2137; // Default to Jerusalem
+        logger.info(
+          `Using Hebcal coordinates for ${location}: lat=${latitude}, lon=${longitude}`
+        );
+      }
+
       const today = date ? new Date(date) : new Date();
       const todayStr = today.toISOString().split("T")[0];
-
-      const latitude = data.location?.latitude || 31.7683; // Default to Jerusalem
-      const longitude = data.location?.longitude || 35.2137; // Default to Jerusalem
 
       // Try to get sunset from Zmanim API (most accurate)
       logger.info(
@@ -208,17 +237,92 @@ export class HebcalService {
     }
   }
 
+  /**
+   * Find the next Shabbat candle lighting time starting from today,
+   * calculated as a fixed offset BEFORE sunset (to match Hebcal's
+   * Shabbat page behaviour, e.g. 18 minutes before sundown).
+   *
+   * This lets us configure the reminder any day of the week, but
+   * always relative to the coming Friday's sunset.
+   */
+  async getNextCandleLightingTime(
+    location: string = "Jerusalem",
+    maxDays: number = 14
+  ): Promise<{ time: string | null; date: string | null }> {
+    try {
+      const today = new Date();
+
+      for (let offset = 0; offset <= maxDays; offset++) {
+        const candidate = new Date(today);
+        candidate.setDate(today.getDate() + offset);
+
+        // 5 = Friday
+        const dayOfWeek = candidate.getDay();
+        if (dayOfWeek !== 5) {
+          continue;
+        }
+
+        const dateStr = candidate.toISOString().split("T")[0];
+
+        // Get sunset time for that Friday using the Zmanim API
+        const sunsetTime = await this.getSunsetTime(location, dateStr);
+        if (!sunsetTime) {
+          logger.warn(
+            `No sunset time found for ${location} on ${dateStr} when calculating candle lighting`
+          );
+          continue;
+        }
+
+        // sunsetTime is "HH:MM" – compute candle lighting as 18 minutes before sunset
+        const [hours, minutes] = sunsetTime.split(":").map(Number);
+        let totalMinutes = hours * 60 + minutes - 18; // 18 minutes before
+
+        if (totalMinutes < 0) {
+          totalMinutes += 24 * 60; // wrap to previous day just in case
+        }
+
+        const candleHours = Math.floor(totalMinutes / 60) % 24;
+        const candleMins = totalMinutes % 60;
+        const candleTime = `${String(candleHours).padStart(2, "0")}:${String(
+          candleMins
+        ).padStart(2, "0")}`;
+
+        logger.info(
+          `Found next candle lighting time for ${location} on ${dateStr}: sunset=${sunsetTime}, candleLighting=${candleTime}`
+        );
+
+        return { time: candleTime, date: dateStr };
+      }
+
+      logger.warn(
+        `No Friday with sunset time found for ${location} in the next ${maxDays} days`
+      );
+      return { time: null, date: null };
+    } catch (error) {
+      logger.error("Error getting next candle lighting time:", error);
+      return { time: null, date: null };
+    }
+  }
+
   private extractCandleLightingTime(
     data: HebcalResponse,
     dateStr: string
   ): string | null {
-    // Look for candle lighting events in the items
-    const candleEvent = data.items?.find(
-      (item) =>
-        item.category === "candles" ||
-        item.title?.toLowerCase().includes("candle") ||
-        item.title?.toLowerCase().includes("lighting")
-    );
+    // Look for candle lighting events in the items for the specific date
+    const candleEvent = data.items?.find((item) => {
+      if (!item.date) return false;
+
+      // Ensure the event is on the same Gregorian date
+      const eventDateStr = item.date.split("T")[0];
+      const isSameDate = eventDateStr === dateStr;
+
+      return (
+        isSameDate &&
+        (item.category === "candles" ||
+          item.title?.toLowerCase().includes("candle") ||
+          item.title?.toLowerCase().includes("lighting"))
+      );
+    });
 
     if (candleEvent && candleEvent.date) {
       // Extract time from date string (format: "2024-01-15T16:30:00+02:00")

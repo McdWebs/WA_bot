@@ -48,6 +48,14 @@ export class ReminderScheduler {
 
   private async checkAndSendReminders(): Promise<void> {
     try {
+      // Check if it's Saturday (Shabbat) - don't send any reminders on Shabbat
+      const today = new Date();
+      const dayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
+      if (dayOfWeek === 6) {
+        logger.info(`Shabbat detected (Saturday) - skipping all reminder checks`);
+        return;
+      }
+
       logger.info(`🧪 TEST MODE: Starting reminder check at ${new Date().toISOString()}`);
       
       // Get all active reminder settings with user data
@@ -226,7 +234,9 @@ export class ReminderScheduler {
       // Get event time based on reminder type
       switch (setting.reminder_type) {
         case "tefillin":
-          eventTime = await hebcalService.getTefilinTime(
+          // For tefillin reminders we schedule relative to SUNSET (end time),
+          // not the earliest time for putting on tefillin.
+          eventTime = await hebcalService.getSunsetTime(
             user.location || "Jerusalem",
             dateStr
           );
@@ -240,7 +250,24 @@ export class ReminderScheduler {
             const now = new Date();
             const currentHour = now.getHours();
             const currentMinute = now.getMinutes();
-            return currentHour === 8 && currentMinute === 0;
+            const isTimeToSend = currentHour === 8 && currentMinute === 0;
+            
+            if (isTimeToSend) {
+              // Check if we already sent this reminder today to prevent duplicates
+              const todayStr = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+              const lastSentDate = setting.last_sent_at 
+                ? setting.last_sent_at.split("T")[0] 
+                : null;
+              
+              if (lastSentDate === todayStr) {
+                logger.debug(
+                  `Reminder ${setting.id} (candle_lighting) already sent today (${lastSentDate}), skipping duplicate send`
+                );
+                return false;
+              }
+            }
+            
+            return isTimeToSend;
           }
           return false;
         case "shema":
@@ -277,10 +304,27 @@ export class ReminderScheduler {
       }
 
       // Check if it's time to send
-      return timezoneService.isTimeToSendReminder(
+      const shouldSend = timezoneService.isTimeToSendReminder(
         finalReminderTime,
         userTimezone
       );
+
+      if (shouldSend) {
+        // Check if we already sent this reminder today to prevent duplicates
+        const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+        const lastSentDate = setting.last_sent_at 
+          ? setting.last_sent_at.split("T")[0] 
+          : null;
+        
+        if (lastSentDate === today) {
+          logger.debug(
+            `Reminder ${setting.id} already sent today (${lastSentDate}), skipping duplicate send`
+          );
+          return false;
+        }
+      }
+
+      return shouldSend;
     } catch (error) {
       logger.error("Error checking if should send reminder:", error);
       return false;
@@ -344,6 +388,19 @@ export class ReminderScheduler {
         );
         
         if (shouldTrigger) {
+          // Check if we already sent this reminder today to prevent duplicates
+          const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+          const lastSentDate = setting.last_sent_at 
+            ? setting.last_sent_at.split("T")[0] 
+            : null;
+          
+          if (lastSentDate === today) {
+            logger.debug(
+              `🧪 TEST MODE: Reminder ${setting.id} already sent today (${lastSentDate}), skipping duplicate send`
+            );
+            return false;
+          }
+          
           logger.info(
             `🧪 TEST MODE: ✅ TRIGGERING reminder for ${user.phone_number} - ` +
             `Test time ${setting.test_time} has arrived! ` +
@@ -360,14 +417,33 @@ export class ReminderScheduler {
 
       switch (setting.reminder_type) {
         case "tefillin":
-          eventTime = await hebcalService.getTefilinTime(
+          // In test mode as well, base tefillin reminders on SUNSET
+          // so that offsets are calculated from the end time of the zman.
+          eventTime = await hebcalService.getSunsetTime(
             user.location || "Jerusalem",
             dateStr
           );
           break;
         case "candle_lighting":
           // In test mode, trigger on any day if it's around 8:00 AM
-          return currentHour === 8 && currentMinute >= 0 && currentMinute < config.testMode.triggerWindowMinutes;
+          const shouldTriggerCandle = currentHour === 8 && currentMinute >= 0 && currentMinute < config.testMode.triggerWindowMinutes;
+          
+          if (shouldTriggerCandle) {
+            // Check if we already sent this reminder today to prevent duplicates
+            const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+            const lastSentDate = setting.last_sent_at 
+              ? setting.last_sent_at.split("T")[0] 
+              : null;
+            
+            if (lastSentDate === today) {
+              logger.debug(
+                `🧪 TEST MODE: Reminder ${setting.id} (candle_lighting) already sent today (${lastSentDate}), skipping duplicate send`
+              );
+              return false;
+            }
+          }
+          
+          return shouldTriggerCandle;
         case "shema":
           eventTime = await hebcalService.getShemaTime(
             user.location || "Jerusalem",
@@ -403,6 +479,19 @@ export class ReminderScheduler {
       );
 
       if (shouldTrigger) {
+        // Check if we already sent this reminder today to prevent duplicates
+        const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+        const lastSentDate = setting.last_sent_at 
+          ? setting.last_sent_at.split("T")[0] 
+          : null;
+        
+        if (lastSentDate === today) {
+          logger.debug(
+            `🧪 TEST MODE: Reminder ${setting.id} already sent today (${lastSentDate}), skipping duplicate send`
+          );
+          return false;
+        }
+        
         logger.info(
           `🧪 TEST MODE: ✅ TRIGGERING reminder for ${user.phone_number} - ` +
           `Reminder time has arrived! ` +
@@ -433,21 +522,22 @@ export class ReminderScheduler {
       // Handle different reminder types
       switch (setting.reminder_type) {
         case "tefillin": {
-          eventTime = await hebcalService.getTefilinTime(location, todayStr);
+          // For tefillin reminders we present and calculate based on sunset time
+          eventTime = await hebcalService.getSunsetTime(location, todayStr);
           if (!eventTime) {
             logger.warn(
-              `No tefillin time found for ${location} on ${todayStr}`
+              `No sunset time found for ${location} on ${todayStr} (tefillin reminder)`
             );
             return;
           }
 
-          // Calculate reminder time (before tefillin time)
+          // Calculate reminder time (before sunset time)
           const reminderTime = timezoneService.calculateReminderTime(
             eventTime,
             setting.time_offset_minutes
           );
 
-          const message = `📿 תזכורת: הנחת תפילין\n\n⏰ זמן תפילין: ${eventTime}\n🕐 תזכורת: ${reminderTime}`;
+          const message = `📿 תזכורת: הנחת תפילין\n\n⏰ זמן השקיעה: ${eventTime}\n🕐 זמן התזכורת שלך: ${reminderTime}`;
           await twilioService.sendMessage(user.phone_number, message);
           break;
         }
@@ -546,6 +636,24 @@ export class ReminderScheduler {
       logger.info(
         `Reminder sent to ${user.phone_number} for ${setting.reminder_type}`
       );
+
+      // Update last_sent_at to prevent duplicate sends
+      if (setting.id) {
+        try {
+          await mongoService.updateReminderSettingById(setting.id, {
+            last_sent_at: new Date().toISOString(),
+          });
+          logger.debug(
+            `Updated last_sent_at for reminder ${setting.id} to prevent duplicates`
+          );
+        } catch (updateError) {
+          logger.error(
+            `Error updating last_sent_at for reminder ${setting.id}:`,
+            updateError
+          );
+          // Don't throw - reminder was sent successfully, just tracking failed
+        }
+      }
     } catch (error) {
       logger.error(`Error sending reminder to ${user.phone_number}:`, error);
     }

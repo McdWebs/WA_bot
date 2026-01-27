@@ -30,19 +30,15 @@ export class TwilioService {
     to: string,
     templateKey:
       | "welcome"
-      | "timePicker"
       | "complete"
-      | "completeV2"
       | "genderQuestion"
       | "mainMenu"
-      | "mainMenuV2"
       | "tefillinTimePicker"
-      | "tefillinTimePickerV2"
       | "cityPicker"
       | "shemaTimePicker"
       | "reminderList"
       | "manageReminders"
-      | "manageRemindersV2"
+      | "city_picker"
       | "candleLightingTimePicker",
     parameters?: Record<string, string>
   ): Promise<void> {
@@ -50,10 +46,12 @@ export class TwilioService {
 
     try {
       if (!templateSid || templateSid.trim() === "") {
+        logger.error(`Template ${templateKey} not configured, cannot send template`);
+        logger.error(`Template key: ${templateKey}, SID: ${templateSid || "NOT SET"}`);
+        logger.error(`Environment variable check: WHATSAPP_TEMPLATE_CANDLE_LIGHTING_TIME_PICKER = ${process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_TIME_PICKER || "NOT SET"}`);
         const error = new Error(
           `Template ${templateKey} not configured (SID is empty or missing)`
         );
-        logger.error(`Template ${templateKey} not configured, cannot send template`);
         throw error;
       }
 

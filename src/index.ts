@@ -6,6 +6,8 @@ import twilioService from "./services/twilio";
 import logger from "./utils/logger";
 import reminderStateManager, { ReminderStateMode } from "./services/reminderStateManager";
 import mongoService from "./services/mongo";
+import { Gender } from "./types";
+// import hebcalService from "./services/hebcal";
 
 const app = express();
 
@@ -34,6 +36,7 @@ app.get("/webhook/test", (req, res) => {
   });
 });
 
+
 /**
  * Process incoming WhatsApp message in background
  * This function runs AFTER webhook response is sent
@@ -41,7 +44,7 @@ app.get("/webhook/test", (req, res) => {
  */
 async function processWhatsAppMessage(reqBody: any): Promise<void> {
   const processStartTime = Date.now();
-  
+
   try {
     // Check if this is a status callback (not a message)
     // Status callbacks have MessageStatus but no From field
@@ -79,14 +82,14 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
     if (isInteractive) {
       // Interactive/Button message - use ButtonPayload (preferred) or ButtonText
       buttonIdentifier = ButtonPayload || ButtonText || null;
-      
+
       // List Picker uses ListId
       if (!buttonIdentifier && ListId) {
         buttonIdentifier = ListId;
       }
-      
+
       logger.info(`🔘 Interactive/Button message detected: buttonIdentifier="${buttonIdentifier}" for ${phoneNumber}`);
-      } else {
+    } else {
       logger.info(`📝 Text message detected: "${Body.substring(0, 50)}" for ${phoneNumber}`);
     }
 
@@ -95,51 +98,35 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
     const isInReminderSelectionMode = userState?.mode === ReminderStateMode.CHOOSE_REMINDER;
     const shouldTreatAsText = isInReminderSelectionMode && /^\d+$/.test(messageBody);
     const isButtonClick = isInteractive && !!buttonIdentifier;
-    
+
     logger.info(`🔍 Message classification for ${phoneNumber}: isInteractive=${isInteractive}, buttonIdentifier="${buttonIdentifier}", isButtonClick=${isButtonClick}, shouldTreatAsText=${shouldTreatAsText}`);
 
     const templateSendStartTime = Date.now();
 
-    // OPTIMIZATION: For simple button clicks that just send a template, send it IMMEDIATELY
+    // Process button clicks normally (no fast path - all buttons go through messageHandler)
     if (isButtonClick && !shouldTreatAsText && buttonIdentifier) {
-      const normalizedButton = buttonIdentifier.toLowerCase().trim();
-      
-      // Fast path: Simple template sends that don't need DB queries
-      // These buttons just send a template - no DB, no logic needed
-      const fastPathButtons: Record<string, string> = {
-        "manage_reminders": "manageReminders",
-      };
-      
-      const templateKey = fastPathButtons[normalizedButton];
-      if (templateKey) {
-        // Send template IMMEDIATELY without any DB queries or processing
-        await twilioService.sendTemplateMessage(phoneNumber, templateKey as any);
-        const templateSendTime = Date.now() - templateSendStartTime;
-        logger.info(`⚡ Template sent in ${templateSendTime}ms for ${phoneNumber} (fast path: ${normalizedButton})`);
-        
-        // Process in background (non-critical - just for logging/state updates)
-        setImmediate(() => {
-          messageHandler.handleInteractiveButton(phoneNumber, buttonIdentifier!).catch((err) => {
-            logger.debug(`Background processing error (non-critical):`, err);
-          });
-        });
-        return;
-      }
-      
-      // Other button clicks - process normally (may need DB)
       logger.info(`🔘 Processing button click: "${buttonIdentifier}" from ${phoneNumber}`);
       await messageHandler.handleInteractiveButton(phoneNumber, buttonIdentifier);
-        } else {
-      // Regular text message - check if it's a new user (send template immediately)
+    } else {
+      // Regular text message - send welcome template for every conversation start
       // Use cache to check user quickly without DB query
       const user = await mongoService.getUserByPhone(phoneNumber);
-      
+
       if (!user) {
-        // New user - send template IMMEDIATELY, create user in background
-        await twilioService.sendTemplateMessage(phoneNumber, "manageReminders");
+        // New user - send welcome template IMMEDIATELY, wait for it to complete, then send menu
+        await twilioService.sendTemplateMessage(phoneNumber, "welcome");
+        logger.info(`✅ Welcome template sent, waiting before sending menu for ${phoneNumber}`);
+
+        // Wait longer to ensure welcome template is fully processed and delivered before sending menu
+        // WhatsApp may process messages out of order if sent too quickly
+        // Increased delay to 3 seconds to ensure proper sequencing
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        const gender: Gender = "prefer_not_to_say";
+        await messageHandler.sendMainMenu(phoneNumber, gender);
         const templateSendTime = Date.now() - templateSendStartTime;
-        logger.info(`⚡ Template sent in ${templateSendTime}ms for new user ${phoneNumber} (fast path)`);
-        
+        logger.info(`⚡ Welcome + Menu templates sent in ${templateSendTime}ms for new user ${phoneNumber} (fast path)`);
+
         // Create user in background (non-critical)
         setImmediate(() => {
           mongoService.createUser({
@@ -153,15 +140,28 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
         });
         return;
       }
-      
-      // Existing user - process normally
-      logger.info(`💬 Processing text message from ${phoneNumber}: "${messageBody.substring(0, 50)}"`);
-      const response = await messageHandler.handleIncomingMessage(phoneNumber, messageBody);
 
-          if (response && response.trim() !== "") {
-            await twilioService.sendMessage(phoneNumber, response);
-          }
-        }
+      // Existing user - send welcome template, wait for it to complete, then send menu
+      await twilioService.sendTemplateMessage(phoneNumber, "welcome");
+      logger.info(`✅ Welcome template sent, waiting before sending menu for ${phoneNumber}`);
+
+      // Wait longer to ensure welcome template is fully processed and delivered before sending menu
+      // WhatsApp may process messages out of order if sent too quickly
+      // Increased delay to 3 seconds to ensure proper sequencing
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      const userGender: Gender = (user.gender as Gender) || "prefer_not_to_say";
+      await messageHandler.sendMainMenu(phoneNumber, userGender);
+      const templateSendTime = Date.now() - templateSendStartTime;
+      logger.info(`⚡ Welcome + Menu templates sent in ${templateSendTime}ms for user ${phoneNumber} (conversation start)`);
+
+      // Don't process the message - user will click button from menu template
+      // Button clicks will be handled separately as interactive messages
+
+      const totalProcessTime = Date.now() - processStartTime;
+      logger.info(`✅ Welcome + Menu templates sent in ${totalProcessTime}ms for ${phoneNumber}`);
+      return;
+    }
 
     const totalProcessTime = Date.now() - processStartTime;
     const templateSendTime = Date.now() - templateSendStartTime;
@@ -188,15 +188,15 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
 // Twilio webhook endpoint for incoming WhatsApp messages
 app.post("/webhook/whatsapp", (req, res) => {
   const webhookReceiveTime = Date.now();
-  
+
   // CRITICAL: Respond to Twilio IMMEDIATELY - no await, no async, no conditionals
   // This must be the FIRST thing we do
   // Send empty 200 response (not "OK" text) to avoid Twilio sending it as a message
   res.status(200).send("");
-  
+
   const webhookResponseTime = Date.now();
   const responseLatency = webhookResponseTime - webhookReceiveTime;
-  
+
   logger.info(`⚡ Webhook ACK sent in ${responseLatency}ms`);
 
   // Process message in background (non-blocking)
