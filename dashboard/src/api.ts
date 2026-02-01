@@ -1,4 +1,7 @@
-const API_BASE = "/api/dashboard";
+// When set (e.g. https://wa-bot-7ppq.onrender.com), API calls go to that backend. Otherwise same-origin (/api/dashboard).
+const API_BASE = import.meta.env.VITE_API_BASE_URL
+  ? `${String(import.meta.env.VITE_API_BASE_URL).replace(/\/$/, "")}/api/dashboard`
+  : "/api/dashboard";
 
 function getToken(): string | null {
   return sessionStorage.getItem("dashboard_api_key");
