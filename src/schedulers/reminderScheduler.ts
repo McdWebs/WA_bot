@@ -9,6 +9,8 @@ import logger from "../utils/logger";
 import { ReminderSetting, User } from "../types";
 import { config } from "../config";
 
+const ISRAEL_TZ = "Asia/Jerusalem";
+
 export class ReminderScheduler {
   private isRunning = false;
 
@@ -48,11 +50,10 @@ export class ReminderScheduler {
 
   private async checkAndSendReminders(): Promise<void> {
     try {
-      // Check if it's Saturday (Shabbat) - don't send any reminders on Shabbat
-      const today = new Date();
-      const dayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
-      if (dayOfWeek === 6) {
-        logger.info(`Shabbat detected (Saturday) - skipping all reminder checks`);
+      // Check if it's Saturday (Shabbat) in Israel - don't send any reminders on Shabbat
+      const dayOfWeekInIsrael = timezoneService.getDayOfWeekInTimezone(ISRAEL_TZ);
+      if (dayOfWeekInIsrael === 6) {
+        logger.info(`Shabbat detected (Saturday in Israel) - skipping all reminder checks`);
         return;
       }
 
@@ -124,8 +125,8 @@ export class ReminderScheduler {
     try {
       let location = user.location || "Jerusalem";
       const timezone = user.timezone || "Asia/Jerusalem";
-      const today = new Date();
-      const todayStr = today.toISOString().split("T")[0];
+      // Use Israel date so zmanim and "already sent today" match user's day
+      const todayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
 
       // Get today's Hebrew calendar data with fallback for invalid locations
       let hebcalData;
@@ -242,31 +243,33 @@ export class ReminderScheduler {
           );
           break;
         case "candle_lighting":
-          // Candle lighting is sent at 8:00 AM on Friday, not based on event time
-          const today = new Date();
-          const dayOfWeek = today.getDay(); // 0 = Sunday, 5 = Friday
-          if (dayOfWeek === 5) {
-            // It's Friday - check if it's 8:00 AM
-            const now = new Date();
-            const currentHour = now.getHours();
-            const currentMinute = now.getMinutes();
+          // Candle lighting is sent at 8:00 AM on Friday in Israel, not based on event time
+          const dayOfWeekInIsrael = timezoneService.getDayOfWeekInTimezone(ISRAEL_TZ);
+          if (dayOfWeekInIsrael === 5) {
+            // It's Friday in Israel - check if it's 8:00 AM Israel time
+            const israelTimeString = new Date().toLocaleString("en-US", {
+              timeZone: ISRAEL_TZ,
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            });
+            const [currentHour, currentMinute] = israelTimeString.split(":").map(Number);
             const isTimeToSend = currentHour === 8 && currentMinute === 0;
-            
+
             if (isTimeToSend) {
-              // Check if we already sent this reminder today to prevent duplicates
-              const todayStr = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-              const lastSentDate = setting.last_sent_at 
-                ? setting.last_sent_at.split("T")[0] 
+              const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+              const lastSentDate = setting.last_sent_at
+                ? setting.last_sent_at.split("T")[0]
                 : null;
-              
-              if (lastSentDate === todayStr) {
+
+              if (lastSentDate === israelTodayStr) {
                 logger.debug(
                   `Reminder ${setting.id} (candle_lighting) already sent today (${lastSentDate}), skipping duplicate send`
                 );
                 return false;
               }
             }
-            
+
             return isTimeToSend;
           }
           return false;
@@ -310,13 +313,12 @@ export class ReminderScheduler {
       );
 
       if (shouldSend) {
-        // Check if we already sent this reminder today to prevent duplicates
-        const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-        const lastSentDate = setting.last_sent_at 
-          ? setting.last_sent_at.split("T")[0] 
+        const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+        const lastSentDate = setting.last_sent_at
+          ? setting.last_sent_at.split("T")[0]
           : null;
-        
-        if (lastSentDate === today) {
+
+        if (lastSentDate === israelTodayStr) {
           logger.debug(
             `Reminder ${setting.id} already sent today (${lastSentDate}), skipping duplicate send`
           );
@@ -388,26 +390,25 @@ export class ReminderScheduler {
         );
         
         if (shouldTrigger) {
-          // Check if we already sent this reminder today to prevent duplicates
-          const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-          const lastSentDate = setting.last_sent_at 
-            ? setting.last_sent_at.split("T")[0] 
+          const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+          const lastSentDate = setting.last_sent_at
+            ? setting.last_sent_at.split("T")[0]
             : null;
-          
-          if (lastSentDate === today) {
+
+          if (lastSentDate === israelTodayStr) {
             logger.debug(
               `🧪 TEST MODE: Reminder ${setting.id} already sent today (${lastSentDate}), skipping duplicate send`
             );
             return false;
           }
-          
+
           logger.info(
             `🧪 TEST MODE: ✅ TRIGGERING reminder for ${user.phone_number} - ` +
             `Test time ${setting.test_time} has arrived! ` +
             `Current: ${currentHour}:${String(currentMinute).padStart(2, "0")}`
           );
         }
-        
+
         return shouldTrigger;
       }
 
@@ -429,20 +430,19 @@ export class ReminderScheduler {
           const shouldTriggerCandle = currentHour === 8 && currentMinute >= 0 && currentMinute < config.testMode.triggerWindowMinutes;
           
           if (shouldTriggerCandle) {
-            // Check if we already sent this reminder today to prevent duplicates
-            const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-            const lastSentDate = setting.last_sent_at 
-              ? setting.last_sent_at.split("T")[0] 
+            const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+            const lastSentDate = setting.last_sent_at
+              ? setting.last_sent_at.split("T")[0]
               : null;
-            
-            if (lastSentDate === today) {
+
+            if (lastSentDate === israelTodayStr) {
               logger.debug(
                 `🧪 TEST MODE: Reminder ${setting.id} (candle_lighting) already sent today (${lastSentDate}), skipping duplicate send`
               );
               return false;
             }
           }
-          
+
           return shouldTriggerCandle;
         case "shema":
           eventTime = await hebcalService.getShemaTime(
@@ -480,19 +480,18 @@ export class ReminderScheduler {
       );
 
       if (shouldTrigger) {
-        // Check if we already sent this reminder today to prevent duplicates
-        const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-        const lastSentDate = setting.last_sent_at 
-          ? setting.last_sent_at.split("T")[0] 
+        const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+        const lastSentDate = setting.last_sent_at
+          ? setting.last_sent_at.split("T")[0]
           : null;
-        
-        if (lastSentDate === today) {
+
+        if (lastSentDate === israelTodayStr) {
           logger.debug(
             `🧪 TEST MODE: Reminder ${setting.id} already sent today (${lastSentDate}), skipping duplicate send`
           );
           return false;
         }
-        
+
         logger.info(
           `🧪 TEST MODE: ✅ TRIGGERING reminder for ${user.phone_number} - ` +
           `Reminder time has arrived! ` +
@@ -515,8 +514,7 @@ export class ReminderScheduler {
     location: string
   ): Promise<void> {
     try {
-      const today = new Date();
-      const todayStr = today.toISOString().split("T")[0];
+      const todayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
       let eventTime: string | null = null;
       let additionalData: Record<string, string> = {};
 
@@ -544,11 +542,10 @@ export class ReminderScheduler {
         }
 
         case "candle_lighting": {
-          // Special handling: send at 8:00 AM on Friday
-          const today = new Date();
-          const dayOfWeek = today.getDay();
+          // Special handling: send at 8:00 AM on Friday in Israel
+          const dayOfWeekInIsrael = timezoneService.getDayOfWeekInTimezone(ISRAEL_TZ);
 
-          if (dayOfWeek === 5) {
+          if (dayOfWeekInIsrael === 5) {
             // Friday
             if (!user.location || user.location === "not_specified") {
               // Send all cities' times

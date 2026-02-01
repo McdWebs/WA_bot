@@ -134,6 +134,36 @@ export class TimezoneService {
   }
 
   /**
+   * Returns the current date string (YYYY-MM-DD) in the given timezone.
+   * Use this for "today" when scheduling reminders so server UTC doesn't cause wrong-day logic.
+   */
+  getDateInTimezone(timezone: string): string {
+    return new Date().toLocaleDateString("en-CA", { timeZone: timezone });
+  }
+
+  /**
+   * Returns the current day of week (0 = Sunday, 6 = Saturday) in the given timezone.
+   * Use this for Shabbat/Friday checks so server timezone doesn't cause wrong-day logic.
+   */
+  getDayOfWeekInTimezone(timezone: string): number {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      weekday: "long",
+    });
+    const dayName = formatter.format(new Date());
+    const map: Record<string, number> = {
+      Sunday: 0,
+      Monday: 1,
+      Tuesday: 2,
+      Wednesday: 3,
+      Thursday: 4,
+      Friday: 5,
+      Saturday: 6,
+    };
+    return map[dayName] ?? 0;
+  }
+
+  /**
    * Checks if current time matches the reminder time (within 1 minute tolerance)
    */
   isTimeToSendReminder(reminderTime: string, timezone: string): boolean {
