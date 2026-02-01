@@ -52,6 +52,13 @@ export const config = {
     // In test mode, trigger reminder if current time is within this many minutes of reminder time
     triggerWindowMinutes: parseInt(process.env.TEST_REMINDER_WINDOW_MINUTES || "5", 10),
   },
+
+  // Dashboard API: optional in dev, required in production when dashboard is used
+  dashboard: {
+    apiKey: process.env.DASHBOARD_API_KEY || "",
+    // When set, CORS allows this origin for /api/dashboard (e.g. when frontend is on another host)
+    origin: process.env.DASHBOARD_ORIGIN || "",
+  },
 };
 
 // Validate required environment variables

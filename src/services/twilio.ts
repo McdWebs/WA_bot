@@ -1,6 +1,7 @@
 import twilio from "twilio";
 import { config } from "../config";
 import logger from "../utils/logger";
+import { appendMessageLog } from "./messageLog";
 
 const client = twilio(config.twilio.accountSid, config.twilio.authToken);
 
@@ -17,6 +18,12 @@ export class TwilioService {
       });
 
       logger.info(`Message sent to ${to}: ${result.sid}`);
+      appendMessageLog({
+        phone_number: to,
+        twilio_sid: result.sid,
+        type: "freeform",
+        sent_at: new Date().toISOString(),
+      }).catch(() => {});
     } catch (error) {
       logger.error(`Error sending message to ${to}:`, error);
       throw error;
@@ -119,6 +126,14 @@ export class TwilioService {
         statusError.isTemplateError = true;
         throw statusError;
       }
+
+      appendMessageLog({
+        phone_number: to,
+        twilio_sid: result.sid,
+        type: "template",
+        template_key: templateKey,
+        sent_at: new Date().toISOString(),
+      }).catch(() => {});
     } catch (error: any) {
       logger.error(`Error sending template message to ${to}:`, error);
       logger.error(

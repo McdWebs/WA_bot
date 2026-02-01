@@ -1,4 +1,5 @@
 import express from "express";
+import path from "path";
 import { config } from "./config";
 import messageHandler from "./bot/messageHandler";
 import reminderScheduler from "./schedulers/reminderScheduler";
@@ -7,13 +8,38 @@ import logger from "./utils/logger";
 import reminderStateManager, { ReminderStateMode } from "./services/reminderStateManager";
 import mongoService from "./services/mongo";
 import { Gender } from "./types";
+import dashboardRouter from "./routes/dashboard";
 // import hebcalService from "./services/hebcal";
 
 const app = express();
 
+// CORS for dashboard API when frontend is on another origin
+if (config.dashboard.origin) {
+  app.use("/api/dashboard", (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin === config.dashboard.origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+    }
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key");
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+    next();
+  });
+}
+
 // Middleware
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+
+// Dashboard API (auth required via middleware)
+app.use("/api/dashboard", dashboardRouter);
+
+// Dashboard SPA (serve static build; fallback to index.html for client routing)
+const dashboardDist = path.join(process.cwd(), "dashboard", "dist");
+app.use("/dashboard", express.static(dashboardDist));
+app.get(["/dashboard", "/dashboard/*"], (req, res, next) => {
+  res.sendFile(path.join(dashboardDist, "index.html"), (err) => err && next(err));
+});
 
 // Health check endpoint
 app.get("/health", (req, res) => {
@@ -220,6 +246,10 @@ app.post("/webhook/status", async (req, res) => {
       ErrorMessage,
     });
 
+    const { updateMessageLogStatus } = await import("./services/messageLog");
+    if (MessageSid && MessageStatus) {
+      updateMessageLogStatus(MessageSid, MessageStatus, ErrorCode).catch(() => {});
+    }
   } catch (error) {
     logger.error("Error handling status callback:", error);
     res.status(500).send("Internal server error");

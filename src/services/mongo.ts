@@ -6,7 +6,7 @@ import logger from "../utils/logger";
 let client: MongoClient | null = null;
 let db: Db | null = null;
 
-async function getDb(): Promise<Db> {
+export async function getDb(): Promise<Db> {
   if (db) return db;
 
   try {
@@ -190,6 +190,173 @@ export class MongoService {
       }));
     } catch (error) {
       logger.error("Error fetching active users (Mongo):", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all users with optional filters (for dashboard).
+   * When hasReminders is true, only returns users that have at least one reminder.
+   */
+  async getAllUsers(options?: {
+    status?: string;
+    limit?: number;
+    skip?: number;
+    search?: string;
+    hasReminders?: boolean;
+  }): Promise<User[]> {
+    try {
+      const users = await getUsersCollection();
+
+      if (options?.hasReminders) {
+        const matchStage: any = {};
+        if (options?.status) matchStage.status = options.status;
+        if (options?.search?.trim()) {
+          matchStage.phone_number = { $regex: options.search.trim(), $options: "i" };
+        }
+        const pipeline: any[] = [];
+        if (Object.keys(matchStage).length) pipeline.push({ $match: matchStage });
+        pipeline.push(
+          {
+            $lookup: {
+              from: "reminder_preferences",
+              let: { userOid: "$_id", userId: "$id" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $or: [
+                        { $eq: ["$user_id", "$$userId"] },
+                        {
+                          $and: [
+                            { $ne: ["$$userOid", null] },
+                            { $eq: ["$user_id", { $toString: "$$userOid" }] },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                },
+                { $limit: 1 },
+              ],
+              as: "reminders",
+            },
+          },
+          { $match: { "reminders.0": { $exists: true } } },
+          { $sort: { created_at: -1 } }
+        );
+        if (options?.skip) pipeline.push({ $skip: options.skip });
+        if (options?.limit) pipeline.push({ $limit: options.limit });
+        pipeline.push({ $project: { reminders: 0 } });
+        const result = await users.aggregate(pipeline).toArray();
+        return result.map((u: any) => ({
+          ...u,
+          id: u.id || u._id?.toString(),
+        }));
+      }
+
+      const filter: any = {};
+      if (options?.status) filter.status = options.status;
+      if (options?.search?.trim()) {
+        filter.phone_number = { $regex: options.search.trim(), $options: "i" };
+      }
+      const cursor = users.find(filter).sort({ created_at: -1 });
+      if (options?.skip) cursor.skip(options.skip);
+      if (options?.limit) cursor.limit(options.limit);
+      const result = await cursor.toArray();
+      return result.map((u: any) => ({
+        ...u,
+        id: u.id || u._id?.toString(),
+      }));
+    } catch (error) {
+      logger.error("Error fetching all users (Mongo):", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get total user count with optional filters.
+   * When hasReminders is true, counts only users that have at least one reminder.
+   */
+  async getUsersCount(filters?: {
+    status?: string;
+    search?: string;
+    hasReminders?: boolean;
+  }): Promise<number> {
+    try {
+      const users = await getUsersCollection();
+
+      if (filters?.hasReminders) {
+        const matchStage: any = {};
+        if (filters?.status) matchStage.status = filters.status;
+        if (filters?.search?.trim()) {
+          matchStage.phone_number = { $regex: filters.search.trim(), $options: "i" };
+        }
+        const pipeline: any[] = [];
+        if (Object.keys(matchStage).length) pipeline.push({ $match: matchStage });
+        pipeline.push(
+          {
+            $lookup: {
+              from: "reminder_preferences",
+              let: { userOid: "$_id", userId: "$id" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $or: [
+                        { $eq: ["$user_id", "$$userId"] },
+                        {
+                          $and: [
+                            { $ne: ["$$userOid", null] },
+                            { $eq: ["$user_id", { $toString: "$$userOid" }] },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                },
+                { $limit: 1 },
+              ],
+              as: "reminders",
+            },
+          },
+          { $match: { "reminders.0": { $exists: true } } },
+          { $count: "total" }
+        );
+        const result = await users.aggregate(pipeline).toArray();
+        return (result[0] as any)?.total ?? 0;
+      }
+
+      const filter: any = {};
+      if (filters?.status) filter.status = filters.status;
+      if (filters?.search?.trim()) {
+        filter.phone_number = { $regex: filters.search.trim(), $options: "i" };
+      }
+      return await users.countDocuments(filter);
+    } catch (error) {
+      logger.error("Error counting users (Mongo):", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get user by id (_id or id field).
+   */
+  async getUserById(id: string): Promise<User | null> {
+    try {
+      const users = await getUsersCollection();
+      let filter: any;
+      if (ObjectId.isValid(id) && id.length === 24) {
+        filter = { $or: [{ _id: new ObjectId(id) }, { id }] };
+      } else {
+        filter = { id };
+      }
+      const result = await users.findOne(filter);
+      if (!result) return null;
+      const u: any = result;
+      return { ...u, id: u.id || u._id?.toString() };
+    } catch (error) {
+      logger.error("Error fetching user by id (Mongo):", error);
       throw error;
     }
   }
@@ -436,6 +603,192 @@ export class MongoService {
       });
     } catch (error) {
       logger.error("Error fetching active reminder settings (Mongo):", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all reminder settings with user lookup (for dashboard), with optional filters.
+   */
+  async getAllReminderSettings(options?: {
+    userId?: string;
+    enabled?: boolean;
+    reminderType?: string;
+    limit?: number;
+    skip?: number;
+  }): Promise<(ReminderSetting & { user?: User })[]> {
+    try {
+      const reminders = await getReminderPreferencesCollection();
+      const match: any = {};
+      if (options?.userId) match.user_id = options.userId;
+      if (options?.enabled !== undefined) match.enabled = options.enabled;
+      if (options?.reminderType) match.reminder_type = options.reminderType;
+
+      const pipeline: any[] = [];
+      if (Object.keys(match).length) pipeline.push({ $match: match });
+      pipeline.push(
+        {
+          $lookup: {
+            from: "users",
+            let: { reminderUserId: "$user_id" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $or: [
+                      { $eq: ["$_id", { $cond: [{ $eq: [{ $type: "$$reminderUserId" }, "string"] }, { $toObjectId: "$$reminderUserId" }, "$$reminderUserId"] }] },
+                      { $eq: ["$id", "$$reminderUserId"] },
+                    ],
+                  },
+                },
+              },
+            ],
+            as: "userDoc",
+          },
+        },
+        { $unwind: { path: "$userDoc", preserveNullAndEmptyArrays: true } },
+        { $sort: { created_at: -1 } }
+      );
+      if (options?.skip) pipeline.push({ $skip: options.skip });
+      if (options?.limit) pipeline.push({ $limit: options.limit });
+
+      const result = await reminders.aggregate(pipeline).toArray();
+      return result.map((doc: any) => {
+        const { userDoc, ...reminder } = doc;
+        const user = userDoc
+          ? { ...userDoc, id: userDoc.id || userDoc._id?.toString() }
+          : undefined;
+        return {
+          ...reminder,
+          id: reminder.id || reminder._id?.toString(),
+          user,
+        };
+      });
+    } catch (error) {
+      logger.error("Error fetching all reminder settings (Mongo):", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get total reminder count with optional filters.
+   */
+  async getRemindersCount(filters?: {
+    userId?: string;
+    enabled?: boolean;
+    reminderType?: string;
+  }): Promise<number> {
+    try {
+      const reminders = await getReminderPreferencesCollection();
+      const filter: any = {};
+      if (filters?.userId) filter.user_id = filters.userId;
+      if (filters?.enabled !== undefined) filter.enabled = filters.enabled;
+      if (filters?.reminderType) filter.reminder_type = filters.reminderType;
+      return await reminders.countDocuments(filter);
+    } catch (error) {
+      logger.error("Error counting reminders (Mongo):", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get single reminder by id with user (for dashboard).
+   */
+  async getReminderById(reminderId: string): Promise<(ReminderSetting & { user?: User }) | null> {
+    try {
+      const reminders = await getReminderPreferencesCollection();
+      let filter: any;
+      if (ObjectId.isValid(reminderId) && reminderId.length === 24) {
+        filter = { $or: [{ _id: new ObjectId(reminderId) }, { id: reminderId }] };
+      } else {
+        filter = { id: reminderId };
+      }
+      const doc = await reminders.findOne(filter);
+      if (!doc) return null;
+      const users = await getUsersCollection();
+      const userId = (doc as any).user_id;
+      const userFilter =
+        typeof userId === "string" && ObjectId.isValid(userId) && userId.length === 24
+          ? { _id: new ObjectId(userId) }
+          : { $or: [{ _id: new ObjectId(userId) }, { id: userId }] };
+      const user = await users.findOne(userFilter);
+      const u: any = doc;
+      const userMapped = user
+        ? { ...user, id: (user as any).id || (user as any)._id?.toString() }
+        : undefined;
+      return {
+        ...u,
+        id: u.id || u._id?.toString(),
+        user: userMapped,
+      };
+    } catch (error) {
+      logger.error("Error fetching reminder by id (Mongo):", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Dashboard stats: users by status, reminders by type, signups over time.
+   */
+  async getDashboardStats(): Promise<{
+    usersByStatus: Record<string, number>;
+    usersTotal: number;
+    remindersByType: Record<string, number>;
+    remindersTotal: number;
+    remindersEnabled: number;
+    signupsOverTime: { date: string; count: number }[];
+  }> {
+    try {
+      const database = await getDb();
+      const users = database.collection<User>("users");
+      const reminders = database.collection("reminder_preferences");
+
+      const [byStatus, usersTotal, byType, remindersTotal, remindersEnabled, signups] =
+        await Promise.all([
+          users.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]).toArray(),
+          users.countDocuments(),
+          reminders.aggregate([{ $group: { _id: "$reminder_type", count: { $sum: 1 } } }]).toArray(),
+          reminders.countDocuments(),
+          reminders.countDocuments({ enabled: true }),
+          users
+            .aggregate([
+              {
+                $group: {
+                  _id: { $dateToString: { format: "%Y-%m-%d", date: { $toDate: "$created_at" } } },
+                  count: { $sum: 1 },
+                },
+              },
+              { $sort: { _id: 1 } },
+              { $limit: 90 },
+            ])
+            .toArray(),
+        ]);
+
+      const usersByStatus: Record<string, number> = {};
+      byStatus.forEach((r: any) => {
+        usersByStatus[r._id || "unknown"] = r.count;
+      });
+
+      const remindersByType: Record<string, number> = {};
+      byType.forEach((r: any) => {
+        remindersByType[r._id || "unknown"] = r.count;
+      });
+
+      const signupsOverTime = (signups as any[]).map((r) => ({
+        date: r._id,
+        count: r.count,
+      }));
+
+      return {
+        usersByStatus,
+        usersTotal,
+        remindersByType,
+        remindersTotal,
+        remindersEnabled,
+        signupsOverTime,
+      };
+    } catch (error) {
+      logger.error("Error fetching dashboard stats (Mongo):", error);
       throw error;
     }
   }

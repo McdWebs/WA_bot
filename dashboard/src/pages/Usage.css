@@ -1,0 +1,77 @@
+.usage-page {
+  padding: 1.5rem;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.usage-page h1 {
+  margin: 0 0 1rem 0;
+  font-size: 1.5rem;
+  color: #e2e8f0;
+}
+
+.cached-badge {
+  font-size: 0.85rem;
+  color: #94a3b8;
+  margin: 0 0 1rem 0;
+}
+
+.usage-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  .usage-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.usage-card {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 1rem;
+  border: 1px solid #334155;
+}
+
+.usage-card h2 {
+  margin: 0 0 0.75rem 0;
+  font-size: 1.1rem;
+  color: #cbd5e1;
+}
+
+.usage-count,
+.usage-price {
+  margin: 0.35rem 0;
+  font-size: 1rem;
+  color: #e2e8f0;
+}
+
+.usage-price {
+  font-weight: 600;
+}
+
+.usage-records {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #334155;
+}
+
+.usage-records h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  color: #94a3b8;
+}
+
+.usage-records ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.85rem;
+  color: #cbd5e1;
+}
+
+.usage-records li {
+  padding: 0.25rem 0;
+}

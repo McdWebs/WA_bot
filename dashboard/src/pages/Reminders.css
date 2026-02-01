@@ -1,0 +1,82 @@
+.reminders-page {
+  padding: 1.5rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.reminders-page h1 {
+  margin: 0 0 1rem 0;
+  font-size: 1.5rem;
+  color: #e2e8f0;
+}
+
+.reminders-page .filters {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.reminders-page .filters select {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+}
+
+.reminders-page .table-wrap {
+  overflow-x: auto;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #1e293b;
+}
+
+.reminders-page .data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.reminders-page .data-table th,
+.reminders-page .data-table td {
+  padding: 0.65rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid #334155;
+}
+
+.reminders-page .data-table th {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.reminders-page .data-table td {
+  color: #e2e8f0;
+}
+
+.reminders-page .pagination {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  color: #94a3b8;
+}
+
+.reminders-page .pagination button {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  background: #1e293b;
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.reminders-page .pagination button:hover:not(:disabled) {
+  background: #334155;
+}
+
+.reminders-page .pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
