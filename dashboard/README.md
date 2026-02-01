@@ -9,25 +9,20 @@ Backend URL: **https://wa-bot-7ppq.onrender.com**
 **Option A – Dashboard served from the same backend**  
 If you deploy the bot (with dashboard build) to Render, the dashboard is at `https://wa-bot-7ppq.onrender.com/dashboard`. No extra env: API calls use the same origin.
 
-**Option B – Dashboard on another host or local dev**  
+**Option B – Dashboard on Vercel or another host**  
 To point the dashboard at the Render backend:
 
-1. In the dashboard folder, create `.env` (copy from `.env.example`):
-   ```bash
-   cp .env.example .env
-   ```
-   `.env.example` already sets `VITE_API_BASE_URL=https://wa-bot-7ppq.onrender.com`.
+1. **Vercel env vars** (or `.env` for local build):
+   - `VITE_API_BASE_URL` = `https://wa-bot-7ppq.onrender.com`
+   - `VITE_BASE_PATH` = `/` (so assets load at the root; **required for Vercel**)
 
-2. Build the dashboard:
-   ```bash
-   npm run build
-   ```
+2. Build the dashboard (Vercel does this automatically).
 
 3. On the **backend** (Render), set **DASHBOARD_ORIGIN** to the dashboard origin (so CORS allows it):
+   - Vercel: `DASHBOARD_ORIGIN=https://your-app.vercel.app`
    - Local dev: `DASHBOARD_ORIGIN=http://localhost:5173`
-   - Deployed elsewhere: `DASHBOARD_ORIGIN=https://your-dashboard-domain.com`
 
-Then open the dashboard (locally or your host) and log in with `DASHBOARD_API_KEY`.
+Then open the dashboard and log in with `DASHBOARD_API_KEY`.
 
 ## Development
 
