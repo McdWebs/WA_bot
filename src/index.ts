@@ -13,15 +13,20 @@ import dashboardRouter from "./routes/dashboard";
 
 const app = express();
 
-// CORS for dashboard API when frontend is on another origin
-if (config.dashboard.origin) {
+// CORS for dashboard API when frontend is on another origin (e.g. Vercel)
+const allowedOrigins = (config.dashboard.origin || "")
+  .split(",")
+  .map((o) => o.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+if (allowedOrigins.length > 0) {
   app.use("/api/dashboard", (req, res, next) => {
     const origin = req.headers.origin;
-    if (origin === config.dashboard.origin) {
+    if (origin && allowedOrigins.some((allowed) => origin === allowed || origin === allowed + "/")) {
       res.setHeader("Access-Control-Allow-Origin", origin);
     }
     res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key");
+    res.setHeader("Access-Control-Max-Age", "86400");
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
   });
