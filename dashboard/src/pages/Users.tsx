@@ -44,6 +44,8 @@ export default function Users() {
           <div className="detail-card">
             <h2>Profile</h2>
             <dl>
+              <dt>ID</dt>
+              <dd className="mono">{user.id ?? id}</dd>
               <dt>Phone</dt>
               <dd>{user.phone_number}</dd>
               <dt>Status</dt>

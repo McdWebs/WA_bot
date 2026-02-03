@@ -69,6 +69,8 @@ export default function ReminderDetail() {
         <div className="detail-card">
           <h2>Details</h2>
           <dl>
+            <dt>ID</dt>
+            <dd className="mono">{reminder.id ?? id}</dd>
             <dt>Type</dt>
             <dd>{reminder.reminder_type}</dd>
             <dt>Enabled</dt>

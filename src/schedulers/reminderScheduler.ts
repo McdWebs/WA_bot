@@ -390,16 +390,16 @@ export class ReminderScheduler {
         );
         
         if (shouldTrigger) {
+          // In test_mode with test_time, allow sending even if already sent today (for easier testing)
           const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
           const lastSentDate = setting.last_sent_at
             ? setting.last_sent_at.split("T")[0]
             : null;
 
           if (lastSentDate === israelTodayStr) {
-            logger.debug(
-              `🧪 TEST MODE: Reminder ${setting.id} already sent today (${lastSentDate}), skipping duplicate send`
+            logger.info(
+              `🧪 TEST MODE: Reminder ${setting.id} already sent today (${lastSentDate}); test_time override: allowing send for testing`
             );
-            return false;
           }
 
           logger.info(
