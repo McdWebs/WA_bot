@@ -55,6 +55,21 @@
   min-width: 180px;
 }
 
+.filters .search-btn {
+  padding: 0.5rem 1rem;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #334155;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.filters .search-btn:hover {
+  background: #475569;
+}
+
 .filter-checkbox {
   display: flex;
   align-items: center;
@@ -190,6 +205,18 @@
   border-bottom: 1px solid #334155;
   font-size: 0.9rem;
   color: #e2e8f0;
+}
+
+.reminder-list .reminder-link {
+  color: #60a5fa;
+  text-decoration: none;
+  display: block;
+  padding: 0.2rem 0;
+}
+
+.reminder-list .reminder-link:hover {
+  text-decoration: underline;
+  color: #93c5fd;
 }
 
 .muted {

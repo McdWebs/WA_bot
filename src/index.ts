@@ -1,36 +1,65 @@
 import express from "express";
 import path from "path";
+import cors from "cors";
 import { config } from "./config";
 import messageHandler from "./bot/messageHandler";
 import reminderScheduler from "./schedulers/reminderScheduler";
 import twilioService from "./services/twilio";
 import logger from "./utils/logger";
 import reminderStateManager, { ReminderStateMode } from "./services/reminderStateManager";
-import mongoService from "./services/mongo";
+import mongoService, { connectMongo, closeMongo } from "./services/mongo";
 import { Gender } from "./types";
 import dashboardRouter from "./routes/dashboard";
+import { clearUsageRangeCache } from "./services/twilioUsage";
 // import hebcalService from "./services/hebcal";
 
 const app = express();
 
-// CORS for dashboard API when frontend is on another origin (e.g. Vercel)
-const allowedOrigins = (config.dashboard.origin || "")
-  .split(",")
-  .map((o) => o.trim().replace(/\/$/, ""))
-  .filter(Boolean);
-if (allowedOrigins.length > 0) {
-  app.use("/api/dashboard", (req, res, next) => {
+// CORS for dashboard API: local dev + DASHBOARD_ORIGIN (Vercel etc.)
+const LOCAL_DEV_ORIGINS = [
+  "http://localhost:4173",
+  "http://localhost:5173",
+  "http://127.0.0.1:4173",
+  "http://127.0.0.1:5173",
+];
+const allowedOrigins = new Set([
+  ...LOCAL_DEV_ORIGINS,
+  ...(config.dashboard.origin || "")
+    .split(",")
+    .map((o) => o.trim().replace(/\/$/, ""))
+    .filter(Boolean),
+]);
+
+// Explicit preflight (OPTIONS) handler so PATCH and other methods are always allowed
+app.use("/api/dashboard", (req, res, next) => {
+  if (req.method === "OPTIONS") {
     const origin = req.headers.origin;
-    if (origin && allowedOrigins.some((allowed) => origin === allowed || origin === allowed + "/")) {
+    if (origin && (allowedOrigins.has(origin) || allowedOrigins.has(origin.replace(/\/$/, "")))) {
       res.setHeader("Access-Control-Allow-Origin", origin);
     }
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS, PATCH, POST, PUT, DELETE");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key");
     res.setHeader("Access-Control-Max-Age", "86400");
-    if (req.method === "OPTIONS") return res.sendStatus(204);
-    next();
-  });
-}
+    return res.status(204).end();
+  }
+  next();
+});
+
+app.use(
+  "/api/dashboard",
+  cors({
+    origin: (origin, cb) => {
+      if (origin == null || allowedOrigins.has(origin) || allowedOrigins.has(origin.replace(/\/$/, ""))) {
+        cb(null, true);
+      } else {
+        cb(null, false);
+      }
+    },
+    methods: ["GET", "OPTIONS", "PATCH", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Authorization", "Content-Type", "X-API-Key"],
+    maxAge: 86400,
+  })
+);
 
 // Middleware
 app.use(express.urlencoded({ extended: true }));
@@ -261,27 +290,45 @@ app.post("/webhook/status", async (req, res) => {
   }
 });
 
-// Start server
+// Start server immediately; MongoDB connects on first use (or in background)
 const PORT = config.port;
 app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);
   logger.info(`Environment: ${config.nodeEnv}`);
 
-  // Start reminder scheduler
+  clearUsageRangeCache(); // so Cost & Usage never serves old cached "Other" data
+
+  // Start reminder scheduler (will use MongoDB when it connects)
   reminderScheduler.start();
 
   logger.info("WhatsApp Reminders Bot is ready!");
+
+  // Try MongoDB in background so it's ready for first request (don't block startup)
+  connectMongo().catch((err) => {
+    logger.warn("MongoDB not yet available; will retry on first use:", err?.message || err);
+  });
 });
 
 // Graceful shutdown
-process.on("SIGTERM", () => {
-  logger.info("SIGTERM received, shutting down gracefully");
+async function shutdown(): Promise<void> {
+  logger.info("Shutting down gracefully");
   reminderScheduler.stop();
+  await closeMongo();
   process.exit(0);
+}
+
+process.on("SIGTERM", () => {
+  logger.info("SIGTERM received");
+  shutdown().catch((err) => {
+    logger.error("Shutdown error:", err);
+    process.exit(1);
+  });
 });
 
 process.on("SIGINT", () => {
-  logger.info("SIGINT received, shutting down gracefully");
-  reminderScheduler.stop();
-  process.exit(0);
+  logger.info("SIGINT received");
+  shutdown().catch((err) => {
+    logger.error("Shutdown error:", err);
+    process.exit(1);
+  });
 });

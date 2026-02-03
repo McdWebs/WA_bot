@@ -1,77 +1,116 @@
 .usage-page {
   padding: 1.5rem;
-  max-width: 1000px;
+  max-width: 560px;
   margin: 0 auto;
 }
 
 .usage-page h1 {
-  margin: 0 0 1rem 0;
+  margin: 0 0 1.25rem 0;
   font-size: 1.5rem;
   color: #e2e8f0;
 }
 
-.cached-badge {
+.usage-period-select {
+  margin-bottom: 1.5rem;
+}
+
+.usage-period-select label {
+  display: block;
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin-bottom: 0.35rem;
+}
+
+.usage-period-select select {
+  width: 100%;
+  max-width: 240px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 0.95rem;
+}
+
+.usage-hero {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 1.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.usage-hero-label {
   font-size: 0.85rem;
   color: #94a3b8;
-  margin: 0 0 1rem 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
 }
 
-.usage-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.5rem;
+.usage-hero-cost {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #f1f5f9;
+  line-height: 1.2;
 }
 
-@media (max-width: 768px) {
-  .usage-grid {
-    grid-template-columns: 1fr;
-  }
+.usage-hero-count {
+  font-size: 0.9rem;
+  color: #94a3b8;
+  margin-top: 0.35rem;
 }
 
-.usage-card {
-  background: #1e293b;
-  border-radius: 8px;
-  padding: 1rem;
-  border: 1px solid #334155;
+.usage-breakdown {
+  margin-bottom: 1rem;
 }
 
-.usage-card h2 {
+.usage-breakdown h2 {
   margin: 0 0 0.75rem 0;
-  font-size: 1.1rem;
+  font-size: 1rem;
   color: #cbd5e1;
 }
 
-.usage-count,
-.usage-price {
-  margin: 0.35rem 0;
-  font-size: 1rem;
-  color: #e2e8f0;
-}
-
-.usage-price {
-  font-weight: 600;
-}
-
-.usage-records {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid #334155;
-}
-
-.usage-records h3 {
-  margin: 0 0 0.5rem 0;
-  font-size: 0.9rem;
-  color: #94a3b8;
-}
-
-.usage-records ul {
+.usage-breakdown-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  font-size: 0.85rem;
-  color: #cbd5e1;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-.usage-records li {
-  padding: 0.25rem 0;
+.usage-breakdown-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #334155;
+  color: #e2e8f0;
+  font-size: 0.95rem;
+}
+
+.usage-breakdown-list li:last-child {
+  border-bottom: none;
+}
+
+.usage-breakdown-label {
+  flex: 1;
+}
+
+.usage-breakdown-price {
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.usage-breakdown-count {
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.usage-cached {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin-top: 1rem;
 }

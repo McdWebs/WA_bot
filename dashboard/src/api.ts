@@ -1,7 +1,17 @@
-// When set (e.g. https://wa-bot-7ppq.onrender.com), API calls go to that backend. Otherwise same-origin (/api/dashboard).
-const API_BASE = import.meta.env.VITE_API_BASE_URL
-  ? `${String(import.meta.env.VITE_API_BASE_URL).replace(/\/$/, "")}/api/dashboard`
-  : "/api/dashboard";
+const LOCAL_BACKEND = "http://localhost:3000/api/dashboard";
+
+function getApiBase(): string {
+  if (typeof window !== "undefined") {
+    const origin = window.location.origin;
+    if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
+      return LOCAL_BACKEND;
+    }
+  }
+  if (import.meta.env.DEV) return "/api/dashboard";
+  return import.meta.env.VITE_API_BASE_URL
+    ? `${String(import.meta.env.VITE_API_BASE_URL).replace(/\/$/, "")}/api/dashboard`
+    : "/api/dashboard";
+}
 
 function getToken(): string | null {
   return sessionStorage.getItem("dashboard_api_key");
@@ -23,7 +33,7 @@ export async function api<T>(
   if (!token) {
     throw new Error("Not authenticated");
   }
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${getApiBase()}${path}`, {
     ...options,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -54,6 +64,7 @@ export interface Stats {
   costToday?: number;
   costThisMonth?: number;
   usageCached?: boolean;
+  databaseUnavailable?: boolean;
 }
 
 export interface User {
@@ -113,5 +124,11 @@ export interface MessagesResponse {
 export interface UsageResponse {
   today: { count: number; price: number; records: Array<{ category: string; count: string; price: number }> };
   thisMonth: { count: number; price: number; records: Array<{ category: string; count: string; price: number }> };
-  cached: boolean;
+  cached?: boolean;
+}
+
+export interface UsageForRangeResponse {
+  totalPrice: number;
+  totalCount: number;
+  breakdown: Array<{ label: string; price: number; count: number }>;
 }

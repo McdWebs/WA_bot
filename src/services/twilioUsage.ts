@@ -58,8 +58,8 @@ async function fetchUsage(): Promise<{
   };
 
   return {
-    today: toSummary(todayList, true),
-    thisMonth: toSummary(thisMonthList, true),
+    today: toSummary(todayList, false),
+    thisMonth: toSummary(thisMonthList, false),
   };
 }
 
@@ -85,5 +85,78 @@ export async function getTwilioUsage(): Promise<{
       thisMonth: { count: 0, price: 0, records: [] },
       cached: false,
     };
+  }
+}
+
+/** Human-readable group for a Twilio category */
+const CATEGORY_GROUP: Record<string, string> = {
+  "channels-whatsapp-template-authentication": "WhatsApp",
+  "channels-whatsapp-template-marketing": "WhatsApp",
+  "channels-whatsapp-template-utility": "WhatsApp",
+  "channels-whatsapp-service": "WhatsApp",
+  "channels-whatsapp-conversation-free": "WhatsApp",
+  "channels-messaging-inbound": "WhatsApp",
+  "channels-messaging-outbound": "WhatsApp",
+  "verify-whatsapp-template-business-initiated": "WhatsApp",
+  "verify-whatsapp-conversations-business-initiated": "WhatsApp",
+  "sms": "SMS",
+  "sms-inbound": "SMS",
+  "sms-outbound": "SMS",
+};
+
+const USAGE_RANGE_CACHE = new Map<string, { at: number; data: UsageForRange }>();
+const RANGE_CACHE_TTL_MS = 10 * 60 * 1000;
+
+/** Clear range cache (e.g. after deploy so fresh data is fetched). */
+export function clearUsageRangeCache(): void {
+  USAGE_RANGE_CACHE.clear();
+}
+
+export interface UsageForRange {
+  totalPrice: number;
+  totalCount: number;
+  breakdown: Array<{ label: string; price: number; count: number }>;
+}
+
+/** Get usage for a date range (YYYY-MM-DD). All products: WhatsApp, SMS, Voice, Phone Numbers, etc. */
+export async function getTwilioUsageForRange(
+  startDate: string,
+  endDate: string
+): Promise<UsageForRange> {
+  const cacheKey = `${startDate}-${endDate}`;
+  const cached = USAGE_RANGE_CACHE.get(cacheKey);
+  if (cached && Date.now() - cached.at < RANGE_CACHE_TTL_MS) {
+    return cached.data;
+  }
+  try {
+    const client = twilio(config.twilio.accountSid, config.twilio.authToken);
+    const list = await client.usage.records.list({
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      limit: 200,
+    });
+    const groups: Record<string, { price: number; count: number }> = {};
+    let totalPrice = 0;
+    let totalCount = 0;
+    for (const r of list) {
+      const p = typeof r.price === "number" ? r.price : parseFloat(String(r.price || 0)) || 0;
+      const n = parseInt(String(r.count || r.usage || "0"), 10) || 0;
+      const label = CATEGORY_GROUP[r.category] || "Other";
+      if (!groups[label]) groups[label] = { price: 0, count: 0 };
+      groups[label].price += p;
+      groups[label].count += n;
+      totalPrice += p;
+      totalCount += n;
+    }
+    const breakdown = Object.entries(groups)
+      .map(([label, v]) => ({ label, price: v.price, count: v.count }))
+      .filter((b) => b.price > 0 || b.count > 0)
+      .sort((a, b) => b.price - a.price);
+    const data: UsageForRange = { totalPrice, totalCount, breakdown };
+    USAGE_RANGE_CACHE.set(cacheKey, { at: Date.now(), data });
+    return data;
+  } catch (error) {
+    logger.error("Twilio usage range fetch error:", error);
+    return { totalPrice: 0, totalCount: 0, breakdown: [] };
   }
 }

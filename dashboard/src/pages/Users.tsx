@@ -8,6 +8,7 @@ export default function Users() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [status, setStatus] = useState("");
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [hasReminders, setHasReminders] = useState(false);
   const [page, setPage] = useState(0);
@@ -66,9 +67,18 @@ export default function Users() {
             ) : (
               <ul className="reminder-list">
                 {reminders.map((r) => (
-                  <li key={r.id}>
-                    <strong>{r.reminder_type}</strong> – {r.enabled ? "On" : "Off"} – offset {r.time_offset_minutes} min
-                    {r.last_sent_at && ` · Last: ${new Date(r.last_sent_at).toLocaleString()}`}
+                  <li key={r.id ?? r.reminder_type}>
+                    {r.id ? (
+                      <Link to={`/reminders/${r.id}`} className="reminder-link">
+                        <strong>{r.reminder_type}</strong> – {r.enabled ? "On" : "Off"} – offset {r.time_offset_minutes} min
+                        {r.last_sent_at && ` · Last: ${new Date(r.last_sent_at).toLocaleString()}`}
+                      </Link>
+                    ) : (
+                      <>
+                        <strong>{r.reminder_type}</strong> – {r.enabled ? "On" : "Off"} – offset {r.time_offset_minutes} min
+                        {r.last_sent_at && ` · Last: ${new Date(r.last_sent_at).toLocaleString()}`}
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -93,9 +103,22 @@ export default function Users() {
         <input
           type="text"
           placeholder="Search phone"
-          value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              setSearch(searchInput);
+              setPage(0);
+            }
+          }}
         />
+        <button
+          type="button"
+          className="search-btn"
+          onClick={() => { setSearch(searchInput); setPage(0); }}
+        >
+          Search
+        </button>
         <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(0); }}>
           <option value="">All statuses</option>
           <option value="active">Active</option>

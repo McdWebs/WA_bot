@@ -1,34 +1,122 @@
-import { MongoClient, Db, Collection, ObjectId } from "mongodb";
+import dns from "dns";
+import { MongoClient, Db, Collection, ObjectId, MongoClientOptions } from "mongodb";
 import { config } from "../config";
 import { User, ReminderSetting } from "../types";
 import logger from "../utils/logger";
 
+// Prefer IPv4 to avoid querySrv ETIMEOUT / secureConnect timeout on some networks
+if (typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
+
 let client: MongoClient | null = null;
 let db: Db | null = null;
+/** Single in-flight connection promise so concurrent getDb() calls reuse one connect */
+let connectPromise: Promise<Db> | null = null;
 
-export async function getDb(): Promise<Db> {
-  if (db) return db;
+/** Returns true if the error indicates a lost/stale connection that needs reconnect */
+function isConnectionError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const err = error as { name?: string; message?: string; cause?: { code?: string } };
+  if (err.name === "MongoServerSelectionError") return true;
+  const msg = (err.message ?? "").toLowerCase();
+  if (msg.includes("econnreset")) return true;
+  if (msg.includes("etimeout") || msg.includes("querySrv") || msg.includes("query_srv")) return true;
+  if (msg.includes("timed out") || msg.includes("secureconnect")) return true;
+  if (err.cause && typeof err.cause === "object" && (err.cause as { code?: string }).code === "ECONNRESET") return true;
+  return false;
+}
 
-  try {
-    const uri = process.env.MONGODB_URI;
-    if (!uri) {
-      throw new Error("MONGODB_URI is not set in environment variables");
+/** Close the current client and clear cached db so next getDb() reconnects */
+async function resetConnection(): Promise<void> {
+  if (client) {
+    try {
+      await client.close();
+    } catch (closeErr) {
+      logger.warn("Error closing MongoDB client during reset:", closeErr);
     }
+    client = null;
+    db = null;
+    connectPromise = null;
+    logger.info("MongoDB connection reset; next operation will reconnect");
+  }
+}
 
-    client = new MongoClient(uri);
-    await client.connect();
-
-    // Use a specific DB name; if none in URI, fallback to wa_bot
-    const dbNameFromUri = new URL(uri).pathname.replace("/", "") || "wa_bot";
-    db = client.db(dbNameFromUri);
-
-    logger.info(`Connected to MongoDB database: ${db.databaseName}`);
-
-    return db;
+/**
+ * Runs a Mongo operation; on connection error (e.g. ECONNRESET from idle close),
+ * resets the connection and retries once. Use around every MongoService method body.
+ */
+async function withMongoRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
   } catch (error) {
-    logger.error("Error connecting to MongoDB:", error);
+    if (isConnectionError(error)) {
+      logger.warn("MongoDB connection error, resetting and retrying once", error);
+      await resetConnection();
+      return await fn();
+    }
     throw error;
   }
+}
+
+/**
+ * Returns the singleton DB instance. Connects once and reuses the same connection
+ * for all callers (schedulers, routes, services). Safe to call from many places;
+ * only one physical connection is ever created.
+ */
+export async function getDb(): Promise<Db> {
+  if (db) return db;
+  if (connectPromise) return connectPromise;
+
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    throw new Error("MONGODB_URI is not set in environment variables");
+  }
+
+  const options: MongoClientOptions = {
+    serverSelectionTimeoutMS: 30000,
+    connectTimeoutMS: 20000,
+    retryWrites: true,
+    retryReads: true,
+    maxPoolSize: 10,
+    minPoolSize: 1,
+    // Refresh connections before Atlas closes idle ones (~30 min); avoids ECONNRESET on Render/low traffic
+    maxIdleTimeMS: 25 * 60 * 1000,
+  };
+
+  connectPromise = (async (): Promise<Db> => {
+    try {
+      const newClient = new MongoClient(uri, options);
+      await newClient.connect();
+      client = newClient;
+      const dbNameFromUri = new URL(uri).pathname.replace("/", "") || "wa_bot";
+      db = client.db(dbNameFromUri);
+      logger.info(`Connected to MongoDB database: ${db.databaseName}`);
+      return db;
+    } catch (error) {
+      connectPromise = null;
+      logger.error("Error connecting to MongoDB:", error);
+      throw error;
+    }
+  })();
+
+  return connectPromise;
+}
+
+/**
+ * Connect to MongoDB once at startup. Call this before starting the server/scheduler.
+ * Idempotent: safe to call multiple times; reuses existing connection.
+ */
+export async function connectMongo(): Promise<Db> {
+  return getDb();
+}
+
+/**
+ * Close the MongoDB connection (e.g. on graceful shutdown).
+ * After this, getDb() will reconnect on next use.
+ */
+export async function closeMongo(): Promise<void> {
+  await resetConnection();
 }
 
 async function getUsersCollection(): Promise<Collection<User>> {
@@ -74,124 +162,132 @@ export class MongoService {
 
   // User operations
   async getUserByPhone(phoneNumber: string): Promise<User | null> {
-    try {
-      // Check cache first
-      const cached = this.getCachedUser(phoneNumber);
-      if (cached) {
-        return cached;
+    return withMongoRetry(async () => {
+      try {
+        // Check cache first
+        const cached = this.getCachedUser(phoneNumber);
+        if (cached) {
+          return cached;
+        }
+
+        // Cache miss - fetch from DB
+        const users = await getUsersCollection();
+        const result = await users.findOne({ phone_number: phoneNumber });
+        if (!result) return null;
+
+        // Normalize Mongo document → User shape with string `id`
+        const u: any = result;
+        const user: User = {
+          ...u,
+          id: u.id || u._id?.toString(),
+        };
+
+        // Store in cache
+        this.userCache.set(phoneNumber, {
+          user,
+          timestamp: Date.now(),
+        });
+
+        return user;
+      } catch (error) {
+        logger.error("Error fetching user by phone (Mongo):", error);
+        throw error;
       }
-
-      // Cache miss - fetch from DB
-      const users = await getUsersCollection();
-      const result = await users.findOne({ phone_number: phoneNumber });
-      if (!result) return null;
-
-      // Normalize Mongo document → User shape with string `id`
-      const u: any = result;
-      const user: User = {
-        ...u,
-        id: u.id || u._id?.toString(),
-      };
-
-      // Store in cache
-      this.userCache.set(phoneNumber, {
-        user,
-        timestamp: Date.now(),
-      });
-
-      return user;
-    } catch (error) {
-      logger.error("Error fetching user by phone (Mongo):", error);
-      throw error;
-    }
+    });
   }
 
   async createUser(
     user: Omit<User, "id" | "created_at" | "updated_at">
   ): Promise<User> {
-    try {
-      const users = await getUsersCollection();
-      const now = new Date().toISOString();
-      const doc: User = {
-        ...user,
-        created_at: now,
-        updated_at: now,
-      };
-      const result = await users.insertOne(doc as any);
-      const createdUser: User = {
-        ...doc,
-        id: result.insertedId.toString(),
-      };
+    return withMongoRetry(async () => {
+      try {
+        const users = await getUsersCollection();
+        const now = new Date().toISOString();
+        const doc: User = {
+          ...user,
+          created_at: now,
+          updated_at: now,
+        };
+        const result = await users.insertOne(doc as any);
+        const createdUser: User = {
+          ...doc,
+          id: result.insertedId.toString(),
+        };
 
-      // Update cache with new user
-      this.userCache.set(user.phone_number, {
-        user: createdUser,
-        timestamp: Date.now(),
-      });
+        // Update cache with new user
+        this.userCache.set(user.phone_number, {
+          user: createdUser,
+          timestamp: Date.now(),
+        });
 
-      return createdUser;
-    } catch (error) {
-      logger.error("Error creating user (Mongo):", error);
-      throw error;
-    }
+        return createdUser;
+      } catch (error) {
+        logger.error("Error creating user (Mongo):", error);
+        throw error;
+      }
+    });
   }
 
   async updateUser(
     phoneNumber: string,
     updates: Partial<User>
   ): Promise<User> {
-    try {
-      const users = await getUsersCollection();
-      const now = new Date().toISOString();
-      const result = await users.findOneAndUpdate(
-        { phone_number: phoneNumber },
-        {
-          $set: {
-            ...updates,
-            updated_at: now,
+    return withMongoRetry(async () => {
+      try {
+        const users = await getUsersCollection();
+        const now = new Date().toISOString();
+        const result = await users.findOneAndUpdate(
+          { phone_number: phoneNumber },
+          {
+            $set: {
+              ...updates,
+              updated_at: now,
+            },
           },
-        },
-        { returnDocument: "after" }
-      );
-
-      const value: any = (result as any).value ?? result;
-      if (!value) {
-        throw new Error(
-          `User with phone_number ${phoneNumber} not found for update`
+          { returnDocument: "after" }
         );
+
+        const value: any = (result as any).value ?? result;
+        if (!value) {
+          throw new Error(
+            `User with phone_number ${phoneNumber} not found for update`
+          );
+        }
+
+        const user = value as User & { _id?: any };
+        const updatedUser: User = {
+          ...user,
+          id: user.id || user._id?.toString(),
+        };
+
+        // Update cache with updated user
+        this.userCache.set(phoneNumber, {
+          user: updatedUser,
+          timestamp: Date.now(),
+        });
+
+        return updatedUser;
+      } catch (error) {
+        logger.error("Error updating user (Mongo):", error);
+        throw error;
       }
-
-      const user = value as User & { _id?: any };
-      const updatedUser: User = {
-        ...user,
-        id: user.id || user._id?.toString(),
-      };
-
-      // Update cache with updated user
-      this.userCache.set(phoneNumber, {
-        user: updatedUser,
-        timestamp: Date.now(),
-      });
-
-      return updatedUser;
-    } catch (error) {
-      logger.error("Error updating user (Mongo):", error);
-      throw error;
-    }
+    });
   }
 
   async getAllActiveUsers(): Promise<User[]> {
-    try {
-      const users = await getUsersCollection();
-      const result = await users.find({ status: "active" }).toArray();
-      return result.map((u: any) => ({
-        ...u,
-        id: u.id || u._id?.toString(),
-      }));
-    } catch (error) {
-      logger.error("Error fetching active users (Mongo):", error);
-      throw error;
-    }
+    return withMongoRetry(async () => {
+      try {
+        const users = await getUsersCollection();
+        const result = await users.find({ status: "active" }).toArray();
+        return result.map((u: any) => ({
+          ...u,
+          id: u.id || u._id?.toString(),
+        }));
+      } catch (error) {
+        logger.error("Error fetching active users (Mongo):", error);
+        throw error;
+      }
+    });
   }
 
   /**
@@ -205,10 +301,11 @@ export class MongoService {
     search?: string;
     hasReminders?: boolean;
   }): Promise<User[]> {
-    try {
-      const users = await getUsersCollection();
+    return withMongoRetry(async () => {
+      try {
+        const users = await getUsersCollection();
 
-      if (options?.hasReminders) {
+        if (options?.hasReminders) {
         const matchStage: any = {};
         if (options?.status) matchStage.status = options.status;
         if (options?.search?.trim()) {
@@ -268,10 +365,11 @@ export class MongoService {
         ...u,
         id: u.id || u._id?.toString(),
       }));
-    } catch (error) {
-      logger.error("Error fetching all users (Mongo):", error);
-      throw error;
-    }
+      } catch (error) {
+        logger.error("Error fetching all users (Mongo):", error);
+        throw error;
+      }
+    });
   }
 
   /**
@@ -283,10 +381,11 @@ export class MongoService {
     search?: string;
     hasReminders?: boolean;
   }): Promise<number> {
-    try {
-      const users = await getUsersCollection();
+    return withMongoRetry(async () => {
+      try {
+        const users = await getUsersCollection();
 
-      if (filters?.hasReminders) {
+        if (filters?.hasReminders) {
         const matchStage: any = {};
         if (filters?.status) matchStage.status = filters.status;
         if (filters?.search?.trim()) {
@@ -333,121 +432,130 @@ export class MongoService {
         filter.phone_number = { $regex: filters.search.trim(), $options: "i" };
       }
       return await users.countDocuments(filter);
-    } catch (error) {
-      logger.error("Error counting users (Mongo):", error);
-      throw error;
-    }
+      } catch (error) {
+        logger.error("Error counting users (Mongo):", error);
+        throw error;
+      }
+    });
   }
 
   /**
    * Get user by id (_id or id field).
    */
   async getUserById(id: string): Promise<User | null> {
-    try {
-      const users = await getUsersCollection();
-      let filter: any;
-      if (ObjectId.isValid(id) && id.length === 24) {
-        filter = { $or: [{ _id: new ObjectId(id) }, { id }] };
-      } else {
-        filter = { id };
+    return withMongoRetry(async () => {
+      try {
+        const users = await getUsersCollection();
+        let filter: any;
+        if (ObjectId.isValid(id) && id.length === 24) {
+          filter = { $or: [{ _id: new ObjectId(id) }, { id }] };
+        } else {
+          filter = { id };
+        }
+        const result = await users.findOne(filter);
+        if (!result) return null;
+        const u: any = result;
+        return { ...u, id: u.id || u._id?.toString() };
+      } catch (error) {
+        logger.error("Error fetching user by id (Mongo):", error);
+        throw error;
       }
-      const result = await users.findOne(filter);
-      if (!result) return null;
-      const u: any = result;
-      return { ...u, id: u.id || u._id?.toString() };
-    } catch (error) {
-      logger.error("Error fetching user by id (Mongo):", error);
-      throw error;
-    }
+    });
   }
 
   // Reminder settings operations
   async getReminderSettings(userId: string): Promise<ReminderSetting[]> {
-    try {
-      const reminders = await getReminderPreferencesCollection();
-      const result = await reminders.find({ user_id: userId }).toArray();
-      return result.map((r: any) => ({
-        ...r,
-        id: r.id || r._id?.toString(),
-      }));
-    } catch (error) {
-      logger.error("Error fetching reminder settings (Mongo):", error);
-      throw error;
-    }
+    return withMongoRetry(async () => {
+      try {
+        const reminders = await getReminderPreferencesCollection();
+        const result = await reminders.find({ user_id: userId }).toArray();
+        return result.map((r: any) => ({
+          ...r,
+          id: r.id || r._id?.toString(),
+        }));
+      } catch (error) {
+        logger.error("Error fetching reminder settings (Mongo):", error);
+        throw error;
+      }
+    });
   }
 
   async getReminderSetting(
     userId: string,
     reminderType: string
   ): Promise<ReminderSetting | null> {
-    try {
-      const reminders = await getReminderPreferencesCollection();
-      const result = await reminders.findOne({
-        user_id: userId,
-        reminder_type: reminderType as any,
-      });
-      if (!result) return null;
+    return withMongoRetry(async () => {
+      try {
+        const reminders = await getReminderPreferencesCollection();
+        const result = await reminders.findOne({
+          user_id: userId,
+          reminder_type: reminderType as any,
+        });
+        if (!result) return null;
 
-      const r: any = result;
-      return {
-        ...r,
-        id: r.id || r._id?.toString(),
-      };
-    } catch (error) {
-      logger.error("Error fetching reminder setting (Mongo):", error);
-      throw error;
-    }
+        const r: any = result;
+        return {
+          ...r,
+          id: r.id || r._id?.toString(),
+        };
+      } catch (error) {
+        logger.error("Error fetching reminder setting (Mongo):", error);
+        throw error;
+      }
+    });
   }
 
   async upsertReminderSetting(
     setting: Omit<ReminderSetting, "id" | "created_at" | "updated_at">
   ): Promise<ReminderSetting> {
-    try {
-      const reminders = await getReminderPreferencesCollection();
-      const now = new Date().toISOString();
+    return withMongoRetry(async () => {
+      try {
+        const reminders = await getReminderPreferencesCollection();
+        const now = new Date().toISOString();
 
-      const filter = {
-        user_id: setting.user_id,
-        reminder_type: setting.reminder_type,
-      };
-
-      const update = {
-        $set: {
-          ...setting,
-          updated_at: now,
-        },
-        $setOnInsert: {
-          created_at: now,
-        },
-      };
-
-      const result = await reminders.findOneAndUpdate(filter, update, {
-        upsert: true,
-        returnDocument: "after",
-      });
-
-      const value: any = (result as any).value ?? result;
-      if (!value) {
-        // In rare cases, value can be null with upsert; fetch again
-        const fetched = await reminders.findOne(filter);
-        if (!fetched) {
-          throw new Error("Failed to upsert reminder setting");
-        }
-        const r: any = fetched;
-        return {
-          ...r,
-          id: r.id || r._id?.toString(),
+        const filter = {
+          user_id: setting.user_id,
+          reminder_type: setting.reminder_type,
         };
-      }
 
-      return {
-        ...value,
-        id: value.id || value._id?.toString(),
-      };
-    } catch (error) {
-      logger.error("Error upserting reminder setting (Mongo):", error);
-      throw error;
-    }
+        const update = {
+          $set: {
+            ...setting,
+            updated_at: now,
+          },
+          $setOnInsert: {
+            created_at: now,
+          },
+        };
+
+        const result = await reminders.findOneAndUpdate(filter, update, {
+          upsert: true,
+          returnDocument: "after",
+        });
+
+        const value: any = (result as any).value ?? result;
+        if (!value) {
+          // In rare cases, value can be null with upsert; fetch again
+          const fetched = await reminders.findOne(filter);
+          if (!fetched) {
+            throw new Error("Failed to upsert reminder setting");
+          }
+          const r: any = fetched;
+          return {
+            ...r,
+            id: r.id || r._id?.toString(),
+          };
+        }
+
+        return {
+          ...value,
+          id: value.id || value._id?.toString(),
+        };
+      } catch (error) {
+        logger.error("Error upserting reminder setting (Mongo):", error);
+        throw error;
+      }
+    });
   }
 
   /**
@@ -460,55 +568,58 @@ export class MongoService {
       Omit<ReminderSetting, "id" | "created_at" | "user_id" | "reminder_type">
     >
   ): Promise<ReminderSetting | null> {
-    try {
-      const reminders = await getReminderPreferencesCollection();
-      const now = new Date().toISOString();
+    return withMongoRetry(async () => {
+      try {
+        const reminders = await getReminderPreferencesCollection();
+        const now = new Date().toISOString();
 
-      // Find by _id (MongoDB ObjectId) or custom `id` field
-      let filter: any;
-      if (ObjectId.isValid(reminderId)) {
-        filter = {
-          $or: [{ _id: new ObjectId(reminderId) }, { id: reminderId }],
+        // Find by _id (MongoDB ObjectId) or custom `id` field
+        let filter: any;
+        if (ObjectId.isValid(reminderId)) {
+          filter = {
+            $or: [{ _id: new ObjectId(reminderId) }, { id: reminderId }],
+          };
+        } else {
+          filter = { id: reminderId };
+        }
+
+        const update = {
+          $set: {
+            ...updates,
+            updated_at: now,
+          },
         };
-      } else {
-        filter = { id: reminderId };
+
+        const result = await reminders.findOneAndUpdate(filter, update, {
+          returnDocument: "after",
+        });
+
+        if (!result) {
+          return null;
+        }
+
+        // Depending on driver version, result may be the document itself
+        // or an object with a `.value` property.
+        const value: any =
+          (result as any).value !== undefined ? (result as any).value : result;
+
+        return {
+          ...value,
+          id: value.id || value._id?.toString(),
+        };
+      } catch (error) {
+        logger.error("Error updating reminder setting by ID (Mongo):", error);
+        throw error;
       }
-
-      const update = {
-        $set: {
-          ...updates,
-          updated_at: now,
-        },
-      };
-
-      const result = await reminders.findOneAndUpdate(filter, update, {
-        returnDocument: "after",
-      });
-
-      if (!result) {
-        return null;
-      }
-
-      // Depending on driver version, result may be the document itself
-      // or an object with a `.value` property.
-      const value: any =
-        (result as any).value !== undefined ? (result as any).value : result;
-
-      return {
-        ...value,
-        id: value.id || value._id?.toString(),
-      };
-    } catch (error) {
-      logger.error("Error updating reminder setting by ID (Mongo):", error);
-      throw error;
-    }
+    });
   }
 
   async getAllActiveReminderSettings(): Promise<
     (ReminderSetting & { users: User })[]
   > {
-    try {
-      const reminders = await getReminderPreferencesCollection();
+    return withMongoRetry(async () => {
+      try {
+        const reminders = await getReminderPreferencesCollection();
       const users = await getUsersCollection();
 
       const pipeline = [
@@ -601,10 +712,11 @@ export class MongoService {
         
         return mappedReminder;
       });
-    } catch (error) {
-      logger.error("Error fetching active reminder settings (Mongo):", error);
-      throw error;
-    }
+      } catch (error) {
+        logger.error("Error fetching active reminder settings (Mongo):", error);
+        throw error;
+      }
+    });
   }
 
   /**
@@ -617,57 +729,59 @@ export class MongoService {
     limit?: number;
     skip?: number;
   }): Promise<(ReminderSetting & { user?: User })[]> {
-    try {
-      const reminders = await getReminderPreferencesCollection();
-      const match: any = {};
-      if (options?.userId) match.user_id = options.userId;
-      if (options?.enabled !== undefined) match.enabled = options.enabled;
-      if (options?.reminderType) match.reminder_type = options.reminderType;
+    return withMongoRetry(async () => {
+      try {
+        const reminders = await getReminderPreferencesCollection();
+        const match: any = {};
+        if (options?.userId) match.user_id = options.userId;
+        if (options?.enabled !== undefined) match.enabled = options.enabled;
+        if (options?.reminderType) match.reminder_type = options.reminderType;
 
-      const pipeline: any[] = [];
-      if (Object.keys(match).length) pipeline.push({ $match: match });
-      pipeline.push(
-        {
-          $lookup: {
-            from: "users",
-            let: { reminderUserId: "$user_id" },
-            pipeline: [
-              {
-                $match: {
-                  $expr: {
-                    $or: [
-                      { $eq: ["$_id", { $cond: [{ $eq: [{ $type: "$$reminderUserId" }, "string"] }, { $toObjectId: "$$reminderUserId" }, "$$reminderUserId"] }] },
-                      { $eq: ["$id", "$$reminderUserId"] },
-                    ],
+        const pipeline: any[] = [];
+        if (Object.keys(match).length) pipeline.push({ $match: match });
+        pipeline.push(
+          {
+            $lookup: {
+              from: "users",
+              let: { reminderUserId: "$user_id" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $or: [
+                        { $eq: ["$_id", { $cond: [{ $eq: [{ $type: "$$reminderUserId" }, "string"] }, { $toObjectId: "$$reminderUserId" }, "$$reminderUserId"] }] },
+                        { $eq: ["$id", "$$reminderUserId"] },
+                      ],
+                    },
                   },
                 },
-              },
-            ],
-            as: "userDoc",
+              ],
+              as: "userDoc",
+            },
           },
-        },
-        { $unwind: { path: "$userDoc", preserveNullAndEmptyArrays: true } },
-        { $sort: { created_at: -1 } }
-      );
-      if (options?.skip) pipeline.push({ $skip: options.skip });
-      if (options?.limit) pipeline.push({ $limit: options.limit });
+          { $unwind: { path: "$userDoc", preserveNullAndEmptyArrays: true } },
+          { $sort: { created_at: -1 } }
+        );
+        if (options?.skip) pipeline.push({ $skip: options.skip });
+        if (options?.limit) pipeline.push({ $limit: options.limit });
 
-      const result = await reminders.aggregate(pipeline).toArray();
-      return result.map((doc: any) => {
-        const { userDoc, ...reminder } = doc;
-        const user = userDoc
-          ? { ...userDoc, id: userDoc.id || userDoc._id?.toString() }
-          : undefined;
-        return {
-          ...reminder,
-          id: reminder.id || reminder._id?.toString(),
-          user,
-        };
-      });
-    } catch (error) {
-      logger.error("Error fetching all reminder settings (Mongo):", error);
-      throw error;
-    }
+        const result = await reminders.aggregate(pipeline).toArray();
+        return result.map((doc: any) => {
+          const { userDoc, ...reminder } = doc;
+          const user = userDoc
+            ? { ...userDoc, id: userDoc.id || userDoc._id?.toString() }
+            : undefined;
+          return {
+            ...reminder,
+            id: reminder.id || reminder._id?.toString(),
+            user,
+          };
+        });
+      } catch (error) {
+        logger.error("Error fetching all reminder settings (Mongo):", error);
+        throw error;
+      }
+    });
   }
 
   /**
@@ -678,53 +792,57 @@ export class MongoService {
     enabled?: boolean;
     reminderType?: string;
   }): Promise<number> {
-    try {
-      const reminders = await getReminderPreferencesCollection();
-      const filter: any = {};
-      if (filters?.userId) filter.user_id = filters.userId;
-      if (filters?.enabled !== undefined) filter.enabled = filters.enabled;
-      if (filters?.reminderType) filter.reminder_type = filters.reminderType;
-      return await reminders.countDocuments(filter);
-    } catch (error) {
-      logger.error("Error counting reminders (Mongo):", error);
-      throw error;
-    }
+    return withMongoRetry(async () => {
+      try {
+        const reminders = await getReminderPreferencesCollection();
+        const filter: any = {};
+        if (filters?.userId) filter.user_id = filters.userId;
+        if (filters?.enabled !== undefined) filter.enabled = filters.enabled;
+        if (filters?.reminderType) filter.reminder_type = filters.reminderType;
+        return await reminders.countDocuments(filter);
+      } catch (error) {
+        logger.error("Error counting reminders (Mongo):", error);
+        throw error;
+      }
+    });
   }
 
   /**
    * Get single reminder by id with user (for dashboard).
    */
   async getReminderById(reminderId: string): Promise<(ReminderSetting & { user?: User }) | null> {
-    try {
-      const reminders = await getReminderPreferencesCollection();
-      let filter: any;
-      if (ObjectId.isValid(reminderId) && reminderId.length === 24) {
-        filter = { $or: [{ _id: new ObjectId(reminderId) }, { id: reminderId }] };
-      } else {
-        filter = { id: reminderId };
+    return withMongoRetry(async () => {
+      try {
+        const reminders = await getReminderPreferencesCollection();
+        let filter: any;
+        if (ObjectId.isValid(reminderId) && reminderId.length === 24) {
+          filter = { $or: [{ _id: new ObjectId(reminderId) }, { id: reminderId }] };
+        } else {
+          filter = { id: reminderId };
+        }
+        const doc = await reminders.findOne(filter);
+        if (!doc) return null;
+        const users = await getUsersCollection();
+        const userId = (doc as any).user_id;
+        const userFilter =
+          typeof userId === "string" && ObjectId.isValid(userId) && userId.length === 24
+            ? { _id: new ObjectId(userId) }
+            : { $or: [{ _id: new ObjectId(userId) }, { id: userId }] };
+        const user = await users.findOne(userFilter);
+        const u: any = doc;
+        const userMapped = user
+          ? { ...user, id: (user as any).id || (user as any)._id?.toString() }
+          : undefined;
+        return {
+          ...u,
+          id: u.id || u._id?.toString(),
+          user: userMapped,
+        };
+      } catch (error) {
+        logger.error("Error fetching reminder by id (Mongo):", error);
+        throw error;
       }
-      const doc = await reminders.findOne(filter);
-      if (!doc) return null;
-      const users = await getUsersCollection();
-      const userId = (doc as any).user_id;
-      const userFilter =
-        typeof userId === "string" && ObjectId.isValid(userId) && userId.length === 24
-          ? { _id: new ObjectId(userId) }
-          : { $or: [{ _id: new ObjectId(userId) }, { id: userId }] };
-      const user = await users.findOne(userFilter);
-      const u: any = doc;
-      const userMapped = user
-        ? { ...user, id: (user as any).id || (user as any)._id?.toString() }
-        : undefined;
-      return {
-        ...u,
-        id: u.id || u._id?.toString(),
-        user: userMapped,
-      };
-    } catch (error) {
-      logger.error("Error fetching reminder by id (Mongo):", error);
-      throw error;
-    }
+    });
   }
 
   /**
@@ -738,64 +856,67 @@ export class MongoService {
     remindersEnabled: number;
     signupsOverTime: { date: string; count: number }[];
   }> {
-    try {
-      const database = await getDb();
-      const users = database.collection<User>("users");
-      const reminders = database.collection("reminder_preferences");
+    return withMongoRetry(async () => {
+      try {
+        const database = await getDb();
+        const users = database.collection<User>("users");
+        const reminders = database.collection("reminder_preferences");
 
-      const [byStatus, usersTotal, byType, remindersTotal, remindersEnabled, signups] =
-        await Promise.all([
-          users.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]).toArray(),
-          users.countDocuments(),
-          reminders.aggregate([{ $group: { _id: "$reminder_type", count: { $sum: 1 } } }]).toArray(),
-          reminders.countDocuments(),
-          reminders.countDocuments({ enabled: true }),
-          users
-            .aggregate([
-              {
-                $group: {
-                  _id: { $dateToString: { format: "%Y-%m-%d", date: { $toDate: "$created_at" } } },
-                  count: { $sum: 1 },
+        const [byStatus, usersTotal, byType, remindersTotal, remindersEnabled, signups] =
+          await Promise.all([
+            users.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]).toArray(),
+            users.countDocuments(),
+            reminders.aggregate([{ $group: { _id: "$reminder_type", count: { $sum: 1 } } }]).toArray(),
+            reminders.countDocuments(),
+            reminders.countDocuments({ enabled: true }),
+            users
+              .aggregate([
+                {
+                  $group: {
+                    _id: { $dateToString: { format: "%Y-%m-%d", date: { $toDate: "$created_at" } } },
+                    count: { $sum: 1 },
+                  },
                 },
-              },
-              { $sort: { _id: 1 } },
-              { $limit: 90 },
-            ])
-            .toArray(),
-        ]);
+                { $sort: { _id: 1 } },
+                { $limit: 90 },
+              ])
+              .toArray(),
+          ]);
 
-      const usersByStatus: Record<string, number> = {};
-      byStatus.forEach((r: any) => {
-        usersByStatus[r._id || "unknown"] = r.count;
-      });
+        const usersByStatus: Record<string, number> = {};
+        byStatus.forEach((r: any) => {
+          usersByStatus[r._id || "unknown"] = r.count;
+        });
 
-      const remindersByType: Record<string, number> = {};
-      byType.forEach((r: any) => {
-        remindersByType[r._id || "unknown"] = r.count;
-      });
+        const remindersByType: Record<string, number> = {};
+        byType.forEach((r: any) => {
+          remindersByType[r._id || "unknown"] = r.count;
+        });
 
-      const signupsOverTime = (signups as any[]).map((r) => ({
-        date: r._id,
-        count: r.count,
-      }));
+        const signupsOverTime = (signups as any[]).map((r) => ({
+          date: r._id,
+          count: r.count,
+        }));
 
-      return {
-        usersByStatus,
-        usersTotal,
-        remindersByType,
-        remindersTotal,
-        remindersEnabled,
-        signupsOverTime,
-      };
-    } catch (error) {
-      logger.error("Error fetching dashboard stats (Mongo):", error);
-      throw error;
-    }
+        return {
+          usersByStatus,
+          usersTotal,
+          remindersByType,
+          remindersTotal,
+          remindersEnabled,
+          signupsOverTime,
+        };
+      } catch (error) {
+        logger.error("Error fetching dashboard stats (Mongo):", error);
+        throw error;
+      }
+    });
   }
 
   async deleteReminderSetting(reminderId: string): Promise<void> {
-    try {
-      const reminders = await getReminderPreferencesCollection();
+    return withMongoRetry(async () => {
+      try {
+        const reminders = await getReminderPreferencesCollection();
       
       logger.info(`Attempting to delete reminder with ID: ${reminderId} (type: ${typeof reminderId})`);
       
@@ -851,10 +972,11 @@ export class MongoService {
       } else {
         logger.info(`Successfully deleted reminder with ID: ${reminderId}`);
       }
-    } catch (error) {
-      logger.error("Error deleting reminder setting (Mongo):", error);
-      throw error;
-    }
+      } catch (error) {
+        logger.error("Error deleting reminder setting (Mongo):", error);
+        throw error;
+      }
+    });
   }
 }
 

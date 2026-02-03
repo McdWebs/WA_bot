@@ -6,6 +6,7 @@ import {
   getMessageStats,
   getMessageCountByPhone,
 } from "../services/messageLog";
+import { getTwilioUsageForRange } from "../services/twilioUsage";
 
 const router = Router();
 
@@ -49,8 +50,17 @@ router.get("/stats", async (_req: Request, res: Response) => {
       body.usageCached = usage.cached;
     }
     res.json(body);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to fetch stats" });
+  } catch {
+    // MongoDB unreachable (e.g. network, Atlas IP whitelist) – return empty stats so dashboard still loads
+    res.status(200).json({
+      usersByStatus: {},
+      usersTotal: 0,
+      remindersByType: {},
+      remindersTotal: 0,
+      remindersEnabled: 0,
+      signupsOverTime: [],
+      databaseUnavailable: true,
+    });
   }
 });
 
@@ -142,9 +152,47 @@ router.get("/reminders/:id", async (req: Request, res: Response) => {
   }
 });
 
-/** GET /api/dashboard/usage - Twilio usage/cost (cached) */
-router.get("/usage", async (_req: Request, res: Response) => {
+/** PATCH /api/dashboard/reminders/:id - Update reminder (enabled, time_offset_minutes, test_time) */
+router.patch("/reminders/:id", async (req: Request, res: Response) => {
   try {
+    const reminderId = req.params.id;
+    const existing = await mongoService.getReminderById(reminderId);
+    if (!existing) {
+      res.status(404).json({ error: "Reminder not found" });
+      return;
+    }
+    const body = req.body as Record<string, unknown>;
+    const updates: { enabled?: boolean; time_offset_minutes?: number; test_time?: string } = {};
+    if (typeof body.enabled === "boolean") updates.enabled = body.enabled;
+    if (typeof body.time_offset_minutes === "number") updates.time_offset_minutes = body.time_offset_minutes;
+    if (typeof body.test_time === "string" || body.test_time === null) updates.test_time = body.test_time ?? undefined;
+    if (Object.keys(updates).length === 0) {
+      res.status(400).json({ error: "No valid fields to update" });
+      return;
+    }
+    const updated = await mongoService.updateReminderSettingById(reminderId, updates);
+    if (!updated) {
+      res.status(500).json({ error: "Failed to update reminder" });
+      return;
+    }
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to update reminder" });
+  }
+});
+
+/** GET /api/dashboard/usage - Twilio usage/cost. Optional startDate/endDate (YYYY-MM-DD) for a range. */
+router.get("/usage", async (req: Request, res: Response) => {
+  try {
+    const startDate =
+      typeof req.query.startDate === "string" ? req.query.startDate : undefined;
+    const endDate =
+      typeof req.query.endDate === "string" ? req.query.endDate : undefined;
+    if (startDate && endDate) {
+      const range = await getTwilioUsageForRange(startDate, endDate);
+      res.json(range);
+      return;
+    }
     const usage = await getTwilioUsage();
     res.json({
       today: usage.today,

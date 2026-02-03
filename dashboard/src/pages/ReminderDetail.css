@@ -1,0 +1,172 @@
+.reminder-detail-page {
+  padding: 1.5rem;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.reminder-detail-page h1 {
+  margin: 0 0 1rem 0;
+  font-size: 1.5rem;
+  color: #e2e8f0;
+}
+
+.reminder-detail-page .back-link {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+  padding: 0;
+}
+
+.reminder-detail-page .back-link:hover {
+  color: #f1f5f9;
+}
+
+.reminder-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  .reminder-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.reminder-detail-page .detail-card {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 1rem;
+  border: 1px solid #334155;
+}
+
+.reminder-detail-page .detail-card h2 {
+  margin: 0 0 0.75rem 0;
+  font-size: 1rem;
+  color: #cbd5e1;
+}
+
+.reminder-detail-page .detail-card dl {
+  margin: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.reminder-detail-page .detail-card dt {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  text-transform: uppercase;
+}
+
+.reminder-detail-page .detail-card dd {
+  margin: 0;
+  color: #e2e8f0;
+}
+
+.reminder-detail-page .link-button {
+  background: none;
+  border: none;
+  color: #60a5fa;
+  cursor: pointer;
+  padding: 0;
+  font-size: inherit;
+  text-decoration: none;
+}
+
+.reminder-detail-page .link-button:hover {
+  text-decoration: underline;
+}
+
+.reminder-detail-page .edit-btn {
+  padding: 0.5rem 1rem;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  background: #334155;
+  color: #e2e8f0;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.reminder-detail-page .edit-btn:hover {
+  background: #475569;
+}
+
+.reminder-detail-page .edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.reminder-detail-page .edit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+  color: #94a3b8;
+}
+
+.reminder-detail-page .edit-row input[type="number"],
+.reminder-detail-page .edit-row input[type="text"] {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+}
+
+.reminder-detail-page .edit-row input[type="checkbox"] {
+  width: 1.25rem;
+  height: 1.25rem;
+  accent-color: #4361ee;
+  cursor: pointer;
+}
+
+.reminder-detail-page .edit-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.reminder-detail-page .save-btn,
+.reminder-detail-page .cancel-btn {
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.reminder-detail-page .save-btn {
+  border: 1px solid #4361ee;
+  background: #4361ee;
+  color: #fff;
+}
+
+.reminder-detail-page .save-btn:hover:not(:disabled) {
+  background: #5a75f5;
+}
+
+.reminder-detail-page .cancel-btn {
+  border: 1px solid #475569;
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+.reminder-detail-page .cancel-btn:hover:not(:disabled) {
+  background: #334155;
+}
+
+.reminder-detail-page .save-btn:disabled,
+.reminder-detail-page .cancel-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.reminder-detail-page .form-error {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  color: #f87171;
+}

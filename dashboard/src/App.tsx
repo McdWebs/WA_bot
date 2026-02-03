@@ -6,6 +6,7 @@ import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import Users from "./pages/Users";
 import Reminders from "./pages/Reminders";
+import ReminderDetail from "./pages/ReminderDetail";
 import Messages from "./pages/Messages";
 import Usage from "./pages/Usage";
 import "./App.css";
@@ -41,6 +42,7 @@ function AppRoutes() {
         <Route path="users" element={<Users />} />
         <Route path="users/:id" element={<Users />} />
         <Route path="reminders" element={<Reminders />} />
+        <Route path="reminders/:id" element={<ReminderDetail />} />
         <Route path="messages" element={<Messages />} />
         <Route path="usage" element={<Usage />} />
       </Route>

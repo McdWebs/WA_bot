@@ -103,7 +103,13 @@ An analytics dashboard is available at `/dashboard` (after building it). It show
 - **Messages**: Message stats from the message log (by day, by type, recent list).
 - **Cost**: Twilio usage and cost (today and this month).
 
-Set `DASHBOARD_API_KEY` in your environment and use it to log in. If the frontend is on another origin, set `DASHBOARD_ORIGIN` to that origin for CORS.
+Set `DASHBOARD_API_KEY` in your environment and use it to log in.
+
+**CORS (frontend on a different host):** Local dev origins (`localhost:4173`, `localhost:5173`, etc.) are always allowed. For production (e.g. dashboard on Vercel), set on **Render**:
+
+- `DASHBOARD_ORIGIN` = `https://wa-bot-sage.vercel.app`
+
+Then redeploy. Without it, the production dashboard will get *"No 'Access-Control-Allow-Origin' header"*.
 
 ## Architecture
 
