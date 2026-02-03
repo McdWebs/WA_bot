@@ -345,28 +345,27 @@ export class ReminderScheduler {
     dateStr: string
   ): Promise<boolean> {
     try {
-      // Get current time in Israel timezone (Asia/Jerusalem) for test mode
       const now = new Date();
+      // For test_time: use server (UTC) time so "current time" = when the server thinks it is
+      const utcHours = now.getUTCHours();
+      const utcMinutes = now.getUTCMinutes();
+      const currentTimeMinutesUtc = utcHours * 60 + utcMinutes;
+      // Israel time still used for non–test_time logic below
       const israelTimeString = now.toLocaleString("en-US", {
-        timeZone: "Asia/Jerusalem",  // ✅ Use Israel time
+        timeZone: "Asia/Jerusalem",
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
       });
-      
       const [currentHour, currentMinute] = israelTimeString.split(":").map(Number);
       const currentTimeMinutes = currentHour * 60 + currentMinute;
-      
-      logger.debug(
-        `🧪 TEST MODE: Current time in Israel: ${currentHour}:${String(currentMinute).padStart(2, "0")} (${currentTimeMinutes} min)`
-      );
 
-      // TEST MODE: If manual test_time is set, use it instead of calculating
+      // TEST MODE: If manual test_time is set, compare against UTC (server time)
       if (setting.test_time) {
         logger.debug(
           `🧪 TEST MODE: Found test_time="${setting.test_time}" for reminder ${setting.id} (${setting.reminder_type}) for ${user.phone_number}`
         );
-        
+
         const [testHours, testMinutes] = setting.test_time.split(":").map(Number);
         if (isNaN(testHours) || isNaN(testMinutes)) {
           logger.error(
@@ -374,23 +373,20 @@ export class ReminderScheduler {
           );
           return false;
         }
-        
+
         const testTimeMinutes = testHours * 60 + testMinutes;
-        
-        // For testing: trigger ONLY in the exact minute of test_time
-        // This prevents repeated triggers every minute after the time has passed
-        const shouldTrigger = currentTimeMinutes === testTimeMinutes;
-        
+        const windowMinutes = 1;
+        const diffMinutes = Math.abs(currentTimeMinutesUtc - testTimeMinutes);
+        const shouldTrigger = diffMinutes <= windowMinutes;
+
         logger.info(
-          `🧪 TEST MODE: Checking reminder ${setting.id} - ` +
-          `Current: ${currentHour}:${String(currentMinute).padStart(2, "0")} (${currentTimeMinutes} min), ` +
-          `Test Time: ${setting.test_time} (${testTimeMinutes} min), ` +
-          `Time has ${shouldTrigger ? 'PASSED' : 'NOT YET COME'}, ` +
+          `🧪 TEST MODE: Checking reminder ${setting.id} (test_time=UTC) - ` +
+          `Current UTC: ${String(utcHours).padStart(2, "0")}:${String(utcMinutes).padStart(2, "0")} (${currentTimeMinutesUtc} min), ` +
+          `Test Time: ${setting.test_time} (${testTimeMinutes} min), diff=${diffMinutes}, ` +
           `Should Trigger: ${shouldTrigger}`
         );
-        
+
         if (shouldTrigger) {
-          // In test_mode with test_time, allow sending even if already sent today (for easier testing)
           const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
           const lastSentDate = setting.last_sent_at
             ? setting.last_sent_at.split("T")[0]
@@ -404,13 +400,16 @@ export class ReminderScheduler {
 
           logger.info(
             `🧪 TEST MODE: ✅ TRIGGERING reminder for ${user.phone_number} - ` +
-            `Test time ${setting.test_time} has arrived! ` +
-            `Current: ${currentHour}:${String(currentMinute).padStart(2, "0")}`
+            `Test time ${setting.test_time} (UTC) has arrived! Current UTC: ${String(utcHours).padStart(2, "0")}:${String(utcMinutes).padStart(2, "0")}`
           );
         }
 
         return shouldTrigger;
       }
+
+      logger.debug(
+        `🧪 TEST MODE: Current time Israel: ${currentHour}:${String(currentMinute).padStart(2, "0")} (${currentTimeMinutes} min)`
+      );
 
       // Otherwise, use calculated time (existing logic)
       // Get event time based on reminder type
@@ -537,7 +536,9 @@ export class ReminderScheduler {
           );
 
           const message = `📿 תזכורת: הנחת תפילין\n\n⏰ זמן השקיעה: ${eventTime}\n🕐 זמן התזכורת שלך: ${reminderTime}`;
+          logger.info(`🧪 TEST MODE: Sending tefillin reminder via Twilio to ${user.phone_number}`);
           await twilioService.sendMessage(user.phone_number, message);
+          logger.info(`🧪 TEST MODE: Twilio send completed for ${user.phone_number}`);
           break;
         }
 
