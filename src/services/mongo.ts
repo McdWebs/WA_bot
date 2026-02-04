@@ -622,37 +622,34 @@ export class MongoService {
         const reminders = await getReminderPreferencesCollection();
       const users = await getUsersCollection();
 
+      // Normalize user_id to string so $lookup works whether reminder has user_id as string or ObjectId
       const pipeline = [
         { $match: { enabled: true } },
         {
           $lookup: {
             from: "users",
-            let: { reminderUserId: "$user_id" },
+            let: {
+              reminderUserIdStr: { $toString: "$user_id" },
+            },
             pipeline: [
               {
                 $match: {
                   $expr: {
                     $or: [
-                      // Match _id as ObjectId (convert string user_id to ObjectId)
+                      // Match users._id: convert 24-char string to ObjectId
                       {
-                        $eq: [
-                          "$_id",
+                        $and: [
+                          { $eq: [{ $strLenCP: "$$reminderUserIdStr" }, 24] },
                           {
-                            $cond: {
-                              if: {
-                                $and: [
-                                  { $eq: [{ $type: "$$reminderUserId" }, "string"] },
-                                  { $eq: [{ $strLenCP: "$$reminderUserId" }, 24] },
-                                ],
-                              },
-                              then: { $toObjectId: "$$reminderUserId" },
-                              else: "$$reminderUserId",
-                            },
+                            $eq: [
+                              "$_id",
+                              { $toObjectId: "$$reminderUserIdStr" },
+                            ],
                           },
                         ],
                       },
-                      // Also try matching id field (if it exists as string)
-                      { $eq: ["$id", "$$reminderUserId"] },
+                      // Match users.id (string) with reminder user_id string
+                      { $eq: ["$id", "$$reminderUserIdStr"] },
                     ],
                   },
                 },
