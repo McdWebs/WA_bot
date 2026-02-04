@@ -622,7 +622,7 @@ export class MongoService {
         const reminders = await getReminderPreferencesCollection();
       const users = await getUsersCollection();
 
-      // Normalize user_id to string so $lookup works whether reminder has user_id as string or ObjectId
+      // Match users whether reminder has user_id as string or ObjectId; multiple match paths for robustness
       const pipeline = [
         { $match: { enabled: true } },
         {
@@ -630,13 +630,21 @@ export class MongoService {
             from: "users",
             let: {
               reminderUserIdStr: { $toString: "$user_id" },
+              reminderUserIdRaw: "$user_id",
             },
             pipeline: [
               {
                 $match: {
                   $expr: {
                     $or: [
-                      // Match users._id: convert 24-char string to ObjectId
+                      // Reminder user_id is ObjectId: match users._id directly
+                      {
+                        $and: [
+                          { $eq: [{ $type: "$$reminderUserIdRaw" }, "objectId"] },
+                          { $eq: ["$_id", "$$reminderUserIdRaw"] },
+                        ],
+                      },
+                      // Reminder user_id as 24-char string: convert and match users._id
                       {
                         $and: [
                           { $eq: [{ $strLenCP: "$$reminderUserIdStr" }, 24] },
