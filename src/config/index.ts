@@ -35,6 +35,11 @@ export const config = {
     manageReminders: process.env.WHATSAPP_TEMPLATE_MANAGE_REMINDERS || "",
     city_picker: process.env.CITY_PICKER || "",
     candleLightingTimePicker: process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_TIME_PICKER || "",
+    // Final reminder messages (used to avoid WhatsApp 24-hour freeform limits)
+    shemaFinalMessage: process.env.WHATSAPP_TEMPLATE_SHEMA_final_message || "",
+    tefilinFinalMessage: process.env.WHATSAPP_TEMPLATE_TEFILIN_final_message || "",
+    candleLightingFinalMessage:
+      process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_final_message || "",
   },
 
   hebcal: {

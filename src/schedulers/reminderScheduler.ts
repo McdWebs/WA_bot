@@ -190,9 +190,16 @@ export class ReminderScheduler {
           continue;
         }
 
-        logger.debug(
-          `🧪 TEST MODE: Checking reminder ${setting.id} (${setting.reminder_type}) for ${user.phone_number}, test_time: ${setting.test_time || 'none'}`
-        );
+        // Log at info when reminder has test_time so it's visible in production logs
+        if (setting.test_time) {
+          logger.info(
+            `🧪 TEST MODE: Checking reminder ${setting.id} (${setting.reminder_type}) for ${user.phone_number}, test_time: ${setting.test_time}`
+          );
+        } else {
+          logger.debug(
+            `🧪 TEST MODE: Checking reminder ${setting.id} (${setting.reminder_type}) for ${user.phone_number}, test_time: ${setting.test_time || 'none'}`
+          );
+        }
 
         const shouldSend = await this.shouldSendReminder(
           setting,
@@ -535,10 +542,17 @@ export class ReminderScheduler {
             setting.time_offset_minutes
           );
 
-          const message = `📿 תזכורת: הנחת תפילין\n\n⏰ זמן השקיעה: ${eventTime}\n🕐 זמן התזכורת שלך: ${reminderTime}`;
-          logger.info(`🧪 TEST MODE: Sending tefillin reminder via Twilio to ${user.phone_number}`);
-          await twilioService.sendMessage(user.phone_number, message);
-          logger.info(`🧪 TEST MODE: Twilio send completed for ${user.phone_number}`);
+          logger.info(
+            `Sending tefillin reminder template to ${user.phone_number} (sunset=${eventTime}, reminder=${reminderTime})`
+          );
+          await twilioService.sendTemplateMessage(
+            user.phone_number,
+            "tefilinFinalMessage",
+            {
+              "1": eventTime,
+              "2": reminderTime,
+            }
+          );
           break;
         }
 
@@ -557,7 +571,6 @@ export class ReminderScheduler {
                 "Eilat",
                 "Haifa",
               ];
-              let message = "🕯️ תזכורת: הדלקת נרות שבת\n\n";
 
               for (const city of cities) {
                 const candleTime = await hebcalService.getCandleLightingTime(
@@ -565,7 +578,7 @@ export class ReminderScheduler {
                   todayStr
                 );
                 if (candleTime) {
-                  // Calculate 15 minutes before
+                  // Calculate 15 minutes before candle lighting
                   const [hours, minutes] = candleTime.split(":").map(Number);
                   const reminderMinutes = minutes - 15;
                   const reminderHours = reminderMinutes < 0 ? hours - 1 : hours;
@@ -578,11 +591,20 @@ export class ReminderScheduler {
                     "0"
                   )}:${String(finalMinutes).padStart(2, "0")}`;
 
-                  message += `📍 ${city}: ${reminderTime} (כניסת שבת: ${candleTime})\n`;
+                  logger.info(
+                    `Sending candle lighting template to ${user.phone_number} for city=${city} (candleTime=${candleTime}, reminder=${reminderTime})`
+                  );
+                  await twilioService.sendTemplateMessage(
+                    user.phone_number,
+                    "candleLightingFinalMessage",
+                    {
+                      "1": city,
+                      "2": candleTime,
+                      "3": reminderTime,
+                    }
+                  );
                 }
               }
-
-              await twilioService.sendMessage(user.phone_number, message);
             } else {
               // Send specific city time
               const candleTime = await hebcalService.getCandleLightingTime(
@@ -590,7 +612,7 @@ export class ReminderScheduler {
                 todayStr
               );
               if (candleTime) {
-                // Calculate 15 minutes before
+                // Calculate 15 minutes before candle lighting
                 const [hours, minutes] = candleTime.split(":").map(Number);
                 const reminderMinutes = minutes - 15;
                 const reminderHours = reminderMinutes < 0 ? hours - 1 : hours;
@@ -601,8 +623,18 @@ export class ReminderScheduler {
                   "0"
                 )}:${String(finalMinutes).padStart(2, "0")}`;
 
-                const message = `🕯️ תזכורת: הדלקת נרות שבת\n\n📍 עיר: ${user.location}\n⏰ כניסת שבת: ${candleTime}\n🕐 תזכורת: ${reminderTime}`;
-                await twilioService.sendMessage(user.phone_number, message);
+                logger.info(
+                  `Sending candle lighting template to ${user.phone_number} for city=${user.location} (candleTime=${candleTime}, reminder=${reminderTime})`
+                );
+                await twilioService.sendTemplateMessage(
+                  user.phone_number,
+                  "candleLightingFinalMessage",
+                  {
+                    "1": user.location,
+                    "2": candleTime,
+                    "3": reminderTime,
+                  }
+                );
               }
             }
           }
@@ -622,8 +654,17 @@ export class ReminderScheduler {
             setting.time_offset_minutes
           );
 
-          const message = `📖 תזכורת: זמן קריאת שמע\n\n⏰ זמן קריאת שמע: ${eventTime}\n🕐 תזכורת: ${reminderTime}`;
-          await twilioService.sendMessage(user.phone_number, message);
+          logger.info(
+            `Sending shema reminder template to ${user.phone_number} (shemaTime=${eventTime}, reminder=${reminderTime})`
+          );
+          await twilioService.sendTemplateMessage(
+            user.phone_number,
+            "shemaFinalMessage",
+            {
+              "1": eventTime,
+              "2": reminderTime,
+            }
+          );
           break;
         }
 

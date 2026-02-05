@@ -46,7 +46,10 @@ export class TwilioService {
       | "reminderList"
       | "manageReminders"
       | "city_picker"
-      | "candleLightingTimePicker",
+      | "candleLightingTimePicker"
+      | "shemaFinalMessage"
+      | "tefilinFinalMessage"
+      | "candleLightingFinalMessage",
     parameters?: Record<string, string>
   ): Promise<void> {
     const templateSid = config.templates[templateKey];
