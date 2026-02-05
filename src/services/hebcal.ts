@@ -325,7 +325,12 @@ export class HebcalService {
     });
 
     if (candleEvent && candleEvent.date) {
-      // Extract time from date string (format: "2024-01-15T16:30:00+02:00")
+      // Extract time in location's timezone from ISO string (e.g. "2024-01-15T16:30:00+02:00").
+      // Do NOT use toTimeString() – it would convert to server timezone (e.g. UTC) and show wrong time (e.g. 14:27 instead of 16:27).
+      const timeMatch = candleEvent.date.match(/T(\d{2}):(\d{2})/);
+      if (timeMatch) {
+        return `${timeMatch[1]}:${timeMatch[2]}`;
+      }
       const date = new Date(candleEvent.date);
       return date.toTimeString().slice(0, 5);
     }

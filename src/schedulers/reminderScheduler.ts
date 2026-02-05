@@ -249,11 +249,23 @@ export class ReminderScheduler {
             dateStr
           );
           break;
-        case "candle_lighting":
-          // Candle lighting is sent at 8:00 AM on Friday in Israel, not based on event time
+        case "candle_lighting": {
           const dayOfWeekInIsrael = timezoneService.getDayOfWeekInTimezone(ISRAEL_TZ);
-          if (dayOfWeekInIsrael === 5) {
-            // It's Friday in Israel - check if it's 8:00 AM Israel time
+          if (dayOfWeekInIsrael !== 5) return false;
+
+          const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+          const lastSentDate = setting.last_sent_at
+            ? setting.last_sent_at.split("T")[0]
+            : null;
+          if (lastSentDate === israelTodayStr) {
+            logger.debug(
+              `Reminder ${setting.id} (candle_lighting) already sent today (${lastSentDate}), skipping duplicate send`
+            );
+            return false;
+          }
+
+          // Option 1: 8:00 AM Friday (time_offset_minutes === 0)
+          if (setting.time_offset_minutes === 0) {
             const israelTimeString = new Date().toLocaleString("en-US", {
               timeZone: ISRAEL_TZ,
               hour: "2-digit",
@@ -261,25 +273,32 @@ export class ReminderScheduler {
               hour12: false,
             });
             const [currentHour, currentMinute] = israelTimeString.split(":").map(Number);
-            const isTimeToSend = currentHour === 8 && currentMinute === 0;
-
-            if (isTimeToSend) {
-              const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
-              const lastSentDate = setting.last_sent_at
-                ? setting.last_sent_at.split("T")[0]
-                : null;
-
-              if (lastSentDate === israelTodayStr) {
-                logger.debug(
-                  `Reminder ${setting.id} (candle_lighting) already sent today (${lastSentDate}), skipping duplicate send`
-                );
-                return false;
-              }
-            }
-
-            return isTimeToSend;
+            return currentHour === 8 && currentMinute === 0;
           }
-          return false;
+
+          // Option 2 & 3: 1 hour or 2 hours before candle lighting (time_offset_minutes -60 or -120)
+          const candleTime = await hebcalService.getCandleLightingTime(
+            user.location || "Jerusalem",
+            dateStr
+          );
+          if (!candleTime) return false;
+
+          const reminderTime = timezoneService.calculateReminderTime(
+            candleTime,
+            setting.time_offset_minutes
+          );
+          const userTimezone = user.timezone || "Asia/Jerusalem";
+          const locationTimezone = hebcalData.location?.tzid || "Asia/Jerusalem";
+          let finalReminderTime = reminderTime;
+          if (locationTimezone !== userTimezone) {
+            finalReminderTime = timezoneService.convertTimeToTimezone(
+              reminderTime,
+              locationTimezone,
+              userTimezone
+            );
+          }
+          return timezoneService.isTimeToSendReminder(finalReminderTime, userTimezone);
+        }
         case "shema":
           eventTime = await hebcalService.getShemaTime(
             user.location || "Jerusalem",
@@ -431,25 +450,37 @@ export class ReminderScheduler {
             dateStr
           );
           break;
-        case "candle_lighting":
-          // In test mode, trigger on any day if it's around 8:00 AM
-          const shouldTriggerCandle = currentHour === 8 && currentMinute >= 0 && currentMinute < config.testMode.triggerWindowMinutes;
-          
-          if (shouldTriggerCandle) {
-            const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
-            const lastSentDate = setting.last_sent_at
-              ? setting.last_sent_at.split("T")[0]
-              : null;
-
-            if (lastSentDate === israelTodayStr) {
-              logger.debug(
-                `🧪 TEST MODE: Reminder ${setting.id} (candle_lighting) already sent today (${lastSentDate}), skipping duplicate send`
-              );
-              return false;
-            }
+        case "candle_lighting": {
+          const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+          const dayOfWeekInIsrael = timezoneService.getDayOfWeekInTimezone(ISRAEL_TZ);
+          const lastSentDate = setting.last_sent_at
+            ? setting.last_sent_at.split("T")[0]
+            : null;
+          if (lastSentDate === israelTodayStr) {
+            logger.debug(
+              `🧪 TEST MODE: Reminder ${setting.id} (candle_lighting) already sent today (${lastSentDate}), skipping`
+            );
+            return false;
           }
-
-          return shouldTriggerCandle;
+          if (setting.time_offset_minutes === 0) {
+            const shouldTriggerCandle =
+              currentHour === 8 &&
+              currentMinute >= 0 &&
+              currentMinute < config.testMode.triggerWindowMinutes;
+            return shouldTriggerCandle;
+          }
+          if (dayOfWeekInIsrael !== 5) return false;
+          const candleTime = await hebcalService.getCandleLightingTime(
+            user.location || "Jerusalem",
+            dateStr
+          );
+          if (!candleTime) return false;
+          const [eventHours, eventMinutes] = candleTime.split(":").map(Number);
+          const eventTimeMinutes = eventHours * 60 + eventMinutes;
+          const reminderTimeMinutes = eventTimeMinutes + setting.time_offset_minutes;
+          const shouldTrigger = currentTimeMinutes === reminderTimeMinutes;
+          return shouldTrigger;
+        }
         case "shema":
           eventTime = await hebcalService.getShemaTime(
             user.location || "Jerusalem",
@@ -557,85 +588,59 @@ export class ReminderScheduler {
         }
 
         case "candle_lighting": {
-          // Special handling: send at 8:00 AM on Friday in Israel
           const dayOfWeekInIsrael = timezoneService.getDayOfWeekInTimezone(ISRAEL_TZ);
+          if (dayOfWeekInIsrael !== 5) break;
 
-          if (dayOfWeekInIsrael === 5) {
-            // Friday
-            if (!user.location || user.location === "not_specified") {
-              // Send all cities' times
-              const cities = [
-                "Jerusalem",
-                "Beer Sheva",
-                "Tel Aviv",
-                "Eilat",
-                "Haifa",
-              ];
+          const offset = setting.time_offset_minutes ?? 0;
+          const reminderTimeFromOffset = (candleTime: string) =>
+            offset === 0
+              ? "08:00"
+              : timezoneService.calculateReminderTime(candleTime, offset);
 
-              for (const city of cities) {
-                const candleTime = await hebcalService.getCandleLightingTime(
-                  city,
-                  todayStr
-                );
-                if (candleTime) {
-                  // Calculate 15 minutes before candle lighting
-                  const [hours, minutes] = candleTime.split(":").map(Number);
-                  const reminderMinutes = minutes - 15;
-                  const reminderHours = reminderMinutes < 0 ? hours - 1 : hours;
-                  const finalMinutes =
-                    reminderMinutes < 0
-                      ? 60 + reminderMinutes
-                      : reminderMinutes;
-                  const reminderTime = `${String(reminderHours).padStart(
-                    2,
-                    "0"
-                  )}:${String(finalMinutes).padStart(2, "0")}`;
-
-                  logger.info(
-                    `Sending candle lighting template to ${user.phone_number} for city=${city} (candleTime=${candleTime}, reminder=${reminderTime})`
-                  );
-                  await twilioService.sendTemplateMessage(
-                    user.phone_number,
-                    "candleLightingFinalMessage",
-                    {
-                      "1": city,
-                      "2": candleTime,
-                      "3": reminderTime,
-                    }
-                  );
-                }
-              }
-            } else {
-              // Send specific city time
+          if (!user.location || user.location === "not_specified") {
+            const cities = [
+              "Jerusalem",
+              "Beer Sheva",
+              "Tel Aviv",
+              "Eilat",
+              "Haifa",
+            ];
+            for (const city of cities) {
               const candleTime = await hebcalService.getCandleLightingTime(
-                user.location,
+                city,
                 todayStr
               );
               if (candleTime) {
-                // Calculate 15 minutes before candle lighting
-                const [hours, minutes] = candleTime.split(":").map(Number);
-                const reminderMinutes = minutes - 15;
-                const reminderHours = reminderMinutes < 0 ? hours - 1 : hours;
-                const finalMinutes =
-                  reminderMinutes < 0 ? 60 + reminderMinutes : reminderMinutes;
-                const reminderTime = `${String(reminderHours).padStart(
-                  2,
-                  "0"
-                )}:${String(finalMinutes).padStart(2, "0")}`;
-
+                const reminderTime = reminderTimeFromOffset(candleTime);
                 logger.info(
-                  `Sending candle lighting template to ${user.phone_number} for city=${user.location} (candleTime=${candleTime}, reminder=${reminderTime})`
+                  `Sending candle lighting template to ${user.phone_number} for city=${city} (candleTime=${candleTime}, reminder=${reminderTime})`
                 );
                 await twilioService.sendTemplateMessage(
                   user.phone_number,
                   "candleLightingFinalMessage",
-                  {
-                    "1": user.location,
-                    "2": candleTime,
-                    "3": reminderTime,
-                  }
+                  { "1": city, "2": candleTime, "3": reminderTime }
                 );
               }
+            }
+          } else {
+            const candleTime = await hebcalService.getCandleLightingTime(
+              user.location,
+              todayStr
+            );
+            if (candleTime) {
+              const reminderTime = reminderTimeFromOffset(candleTime);
+              logger.info(
+                `Sending candle lighting template to ${user.phone_number} for city=${user.location} (candleTime=${candleTime}, reminder=${reminderTime})`
+              );
+              await twilioService.sendTemplateMessage(
+                user.phone_number,
+                "candleLightingFinalMessage",
+                {
+                  "1": user.location,
+                  "2": candleTime,
+                  "3": reminderTime,
+                }
+              );
             }
           }
           break;
