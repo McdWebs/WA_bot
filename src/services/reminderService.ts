@@ -340,6 +340,8 @@ export class ReminderService {
       tefillin: "הנחת תפילין",
       candle_lighting: "הדלקת נרות",
       shema: "זמן קריאת שמע",
+      taara: "הפסק טהרה",
+      clean_7: "שבעה נקיים",
     };
     return types[type] || type;
   }

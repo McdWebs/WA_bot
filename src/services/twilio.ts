@@ -50,7 +50,12 @@ export class TwilioService {
       | "candleLightingTimePicker"
       | "shemaFinalMessage"
       | "tefilinFinalMessage"
-      | "candleLightingFinalMessage",
+      | "candleLightingFinalMessage"
+      // Women's flows – tahara / 7 clean days
+      | "taaraTimePicker"
+      | "taaraFinalMessage"
+      | "clean7FinalMessage"
+      | "clean7StartTaaraTime",
     parameters?: Record<string, string>
   ): Promise<void> {
     const templateSid = config.templates[templateKey];

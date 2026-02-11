@@ -177,6 +177,8 @@ export class RemindersCommand {
       tefillin: "Tefilin",
       candle_lighting: "Candle Lighting",
       shema: "Shema Time",
+      taara: "Hefsek Tahara",
+      clean_7: "Seven Clean Days",
     };
     return types[type] || type;
   }
@@ -186,6 +188,8 @@ export class RemindersCommand {
       tefillin: "📿",
       candle_lighting: "🕯️",
       shema: "📖",
+      taara: "🩺",
+      clean_7: "🧼",
     };
     return emojis[type] || "⏰";
   }
@@ -195,6 +199,8 @@ export class RemindersCommand {
       tefillin: "הנחת תפילין",
       candle_lighting: "הדלקת נרות",
       shema: "זמן קריאת שמע",
+      taara: "הפסק טהרה",
+      clean_7: "שבעה נקיים",
     };
     return types[type] || type;
   }

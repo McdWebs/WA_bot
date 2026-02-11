@@ -8,7 +8,10 @@ import logger from "../utils/logger";
 import { Gender, ReminderType } from "../types";
 import reminderService from "../services/reminderService";
 import reminderStateManager, { ReminderStateMode } from "../services/reminderStateManager";
+import timezoneService from "../utils/timezone";
 import { config } from "../config";
+
+const ISRAEL_TZ = "Asia/Jerusalem";
 
 export class MessageHandler {
   /**
@@ -384,6 +387,24 @@ export class MessageHandler {
         normalizedButton === "female" ||
         normalizedButton === "prefer_not_to_say";
 
+      // Women's flows – tahara / 7 clean days
+      const isTaaraMenuSelection =
+        normalizedButton === "taara_stop" ||
+        normalizedButton === "taara" ||
+        normalizedButton === "hefsek_tahara";
+
+      const isClean7MenuSelection =
+        normalizedButton === "clean_7" ||
+        normalizedButton === "clean7" ||
+        normalizedButton === "seven_clean" ||
+        normalizedButton === "7_clean";
+
+      const isTaaraPlusClean7MenuSelection =
+        normalizedButton === "taara_plus_clean7" ||
+        normalizedButton === "taara_clean7" ||
+        (normalizedButton.includes("taara") &&
+          (normalizedButton.includes("7") || normalizedButton.includes("clean")));
+
       // Check if this is a main menu selection (reminder type)
       const isMainMenuSelection =
         normalizedButton === "tefillin" ||
@@ -435,6 +456,10 @@ export class MessageHandler {
         normalizedButton === "tel aviv" ||
         normalizedButton === "eilat" ||
         normalizedButton === "haifa";
+
+      // Time selection for tahara flows: look for explicit HH:MM in the button identifier
+      const taaraTimeMatch = normalizedButton.match(/(\d{1,2}:\d{2})/);
+      const isTaaraTimeSelection = !!taaraTimeMatch;
 
       if (isGenderSelection) {
         // User selected gender - save it and show main menu
@@ -632,6 +657,106 @@ export class MessageHandler {
             await twilioService.sendMessage(
               phoneNumber,
               "❌ שגיאה: לא זוהה סוג התזכורת. אנא התחל מחדש מהתפריט הראשי."
+            );
+          }
+        }
+      } else if (isTaaraMenuSelection) {
+        // Women's flow: Hefsek Tahara – ask user to choose time (bot receives sunset)
+        logger.info(
+          `👩‍🧕 Tahara flow started (hefsek only) for ${phoneNumber}, button="${buttonIdentifier}"`
+        );
+        this.femaleFlowMode.set(phoneNumber, "taara");
+        await this.sendTaaraTimePicker(phoneNumber);
+      } else if (isClean7MenuSelection) {
+        // Women's flow: Seven clean days – reminder by date (how many days passed); start_date = today
+        logger.info(
+          `👩‍🧕 7 clean days flow selected for ${phoneNumber}, button="${buttonIdentifier}"`
+        );
+        const todayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+        await this.saveClean7Reminder(phoneNumber, todayStr);
+        await twilioService.sendTemplateMessage(phoneNumber, "clean7FinalMessage", {
+          "1": "1",
+        });
+      } else if (isTaaraPlusClean7MenuSelection) {
+        // Women's flow: Hefsek + 7 clean days – first ask for hefsek time (same picker, then CLEAN_7_START_TAARA_TIME with button to activate 7)
+        logger.info(
+          `👩‍🧕 Tahara + 7 clean days flow started for ${phoneNumber}, button="${buttonIdentifier}"`
+        );
+        this.femaleFlowMode.set(phoneNumber, "taara_plus_clean7");
+        await this.sendTaaraTimePicker(phoneNumber);
+      } else if (
+        normalizedButton === "start_7_clean" ||
+        normalizedButton === "activate_clean7" ||
+        normalizedButton === "activate_clean_7" ||
+        (normalizedButton.includes("activate") && normalizedButton.includes("clean"))
+      ) {
+        // User pressed "להתחיל 7 נקיים" in CLEAN_7_START_TAARA_TIME template → activate 7 clean days
+        logger.info(
+          `👩‍🧕 Activate 7 clean days for ${phoneNumber}, button="${buttonIdentifier}"`
+        );
+        const todayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+        await this.saveClean7Reminder(phoneNumber, todayStr);
+        await twilioService.sendTemplateMessage(phoneNumber, "clean7FinalMessage", {
+          "1": "1",
+        });
+      } else if (
+        normalizedButton === "stop_the_remainder" ||
+        normalizedButton === "stop_reminder" ||
+        normalizedButton.includes("stop")
+      ) {
+        // User pressed "לעצירת התזכורת לחצי" → disable taara reminder
+        logger.info(
+          `👩‍🧕 Stop taara reminder for ${phoneNumber}, button="${buttonIdentifier}"`
+        );
+        await this.disableTaaraReminder(phoneNumber);
+        await twilioService.sendMessage(
+          phoneNumber,
+          "התזכורת להפסק טהרה הופסקה."
+        );
+      } else if (isTaaraTimeSelection) {
+        // User chose a concrete time (HH:MM) in the tahara time-picker template
+        const timeOfDay = taaraTimeMatch![1];
+        const mode = this.femaleFlowMode.get(phoneNumber) || "taara";
+
+        // Allow cancel buttons as a safety net
+        if (
+          normalizedButton.includes("cancel") ||
+          normalizedButton.includes("ביטול")
+        ) {
+          logger.info(
+            `👩‍🧕 Tahara flow cancelled by user ${phoneNumber}, button="${buttonIdentifier}"`
+          );
+          this.femaleFlowMode.delete(phoneNumber);
+          await twilioService.sendMessage(
+            phoneNumber,
+            "התזכורת להפסק טהרה בוטלה."
+          );
+        } else {
+          logger.info(
+            `👩‍🧕 Tahara time selected for ${phoneNumber}: ${timeOfDay}, mode=${mode}`
+          );
+          const user = await mongoService.getUserByPhone(phoneNumber);
+          const location = user?.location || this.inferLocationFromPhoneNumber(phoneNumber);
+          const todayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+          const sunsetTime = await hebcalService.getSunsetTime(location, todayStr) || "18:00";
+
+          // Always save hefsek tahara reminder
+          await this.saveTaaraReminder(phoneNumber, timeOfDay);
+          this.femaleFlowMode.delete(phoneNumber);
+
+          if (mode === "taara_plus_clean7") {
+            // Combined flow: CLEAN_7_START_TAARA_TIME with {{1}} = sunset only; button start_7_clean
+            await twilioService.sendTemplateMessage(
+              phoneNumber,
+              "clean7StartTaaraTime",
+              { "1": sunsetTime }
+            );
+          } else {
+            // Tahara only: final template has only {{1}} = sunset
+            await twilioService.sendTemplateMessage(
+              phoneNumber,
+              "taaraFinalMessage",
+              { "1": sunsetTime }
             );
           }
         }
@@ -857,6 +982,9 @@ export class MessageHandler {
   // Track which reminder type is being created
   private creatingReminderType = new Map<string, ReminderType>();
 
+   // Track current women's-flow mode per user (hefsek only vs hefsek+7)
+  private femaleFlowMode = new Map<string, "taara" | "taara_plus_clean7">();
+
   /**
    * Sends time picker for tefillin reminder
    * If locationOverride is provided (from city picker), use it; otherwise use user.location / inferred city.
@@ -936,6 +1064,8 @@ export class MessageHandler {
         tefillin: "הנחת תפילין",
         candle_lighting: "הדלקת נרות שבת",
         shema: "זמן קריאת שמע",
+        taara: "הפסק טהרה",
+        clean_7: "שבעה נקיים",
       };
 
       const reminderTypeText = reminderType
@@ -960,6 +1090,28 @@ export class MessageHandler {
       await twilioService.sendMessage(
         phoneNumber,
         "איזה עיר אתה?\n\n1. ירושלים\n2. באר שבע\n3. תל אביב\n4. אילת\n5. חיפה"
+      );
+    }
+  }
+
+  /**
+   * Women's flow: send tahara time-picker template; bot receives sunset time (for display in template).
+   */
+  private async sendTaaraTimePicker(phoneNumber: string): Promise<void> {
+    try {
+      const user = await mongoService.getUserByPhone(phoneNumber);
+      const location = user?.location || this.inferLocationFromPhoneNumber(phoneNumber);
+      const todayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+      const sunsetTime = await hebcalService.getSunsetTime(location, todayStr) || "18:00";
+      await twilioService.sendTemplateMessage(phoneNumber, "taaraTimePicker", {
+        "1": sunsetTime,
+      });
+      logger.debug(`Taara time picker sent to ${phoneNumber} with sunset ${sunsetTime}`);
+    } catch (error) {
+      logger.error(`Error sending taara time picker to ${phoneNumber}:`, error);
+      await twilioService.sendMessage(
+        phoneNumber,
+        "לא הצלחתי לשלוח תפריט בחירת שעה. נסי שוב."
       );
     }
   }
@@ -1118,6 +1270,8 @@ export class MessageHandler {
         tefillin: "הנחת תפילין",
         candle_lighting: "הדלקת נרות",
         shema: "זמן קריאת שמע",
+        taara: "הפסק טהרה",
+        clean_7: "שבעה נקיים",
       };
 
       const timeDescriptions: Record<string, string> = {
@@ -1249,9 +1403,28 @@ export class MessageHandler {
         `✅ Candle lighting reminder saved for ${phoneNumber} with city: ${city}`
       );
 
-      // Send completion template - if template fails, send simple text confirmation instead
+      // Send completion template: {{1}} עיר, {{2}} כניסת שבת, {{3}} זמן התזכורת
       try {
-        if (config.templates.complete && config.templates.complete.trim() !== "") {
+        const location = city || user.location || "Jerusalem";
+        const { time: candleTime } =
+          await hebcalService.getNextCandleLightingTime(location);
+        const reminderTime =
+          timeOffsetMinutes === 0
+            ? "08:00"
+            : candleTime
+              ? timezoneService.calculateReminderTime(candleTime, timeOffsetMinutes)
+              : "08:00";
+        if (config.templates.candleLightingFinalMessage?.trim()) {
+          await twilioService.sendTemplateMessage(
+            phoneNumber,
+            "candleLightingFinalMessage",
+            {
+              "1": location,
+              "2": candleTime || "18:00",
+              "3": reminderTime,
+            }
+          );
+        } else if (config.templates.complete && config.templates.complete.trim() !== "") {
           await twilioService.sendTemplateMessage(phoneNumber, "complete");
         } else {
           // Send simple text confirmation if no template is configured
@@ -1286,6 +1459,141 @@ export class MessageHandler {
         "❌ שגיאה בשמירת התזכורת. נסה שוב."
       );
     }
+  }
+
+  /**
+   * Women's flow: save Hefsek Tahara reminder.
+   * Currently stores the chosen time-of-day as both offset from midnight and test_time
+   * so that future schedulers can use it.
+   */
+  private async saveTaaraReminder(
+    phoneNumber: string,
+    timeOfDay: string | null
+  ): Promise<void> {
+    try {
+      // Ensure user exists – create if missing
+      let user = await mongoService.getUserByPhone(phoneNumber);
+      if (!user) {
+        user = await mongoService.createUser({
+          phone_number: phoneNumber,
+          status: "active",
+          timezone: undefined,
+          location: undefined,
+          gender: undefined,
+        });
+      }
+      if (!user.id) {
+        throw new Error("User not found");
+      }
+
+      // Convert HH:MM to minutes from midnight (offset from 00:00)
+      const offsetMinutes = this.parseTimeOfDayToMinutes(timeOfDay);
+
+      await mongoService.upsertReminderSetting({
+        user_id: user.id,
+        reminder_type: "taara",
+        enabled: true,
+        time_offset_minutes: offsetMinutes,
+        test_time: timeOfDay || undefined,
+      });
+
+      logger.info(
+        `✅ Tahara reminder saved for ${phoneNumber} at ${timeOfDay} (offsetMinutes=${offsetMinutes})`
+      );
+    } catch (error) {
+      logger.error(
+        `Error saving tahara reminder for ${phoneNumber}:`,
+        error
+      );
+      await twilioService.sendMessage(
+        phoneNumber,
+        "❌ שגיאה בשמירת תזכורת הפסק טהרה. נסה שוב."
+      );
+    }
+  }
+
+  /**
+   * Disable taara reminder when user presses "לעצירת התזכורת לחצי" (stop_the_remainder).
+   */
+  private async disableTaaraReminder(phoneNumber: string): Promise<void> {
+    try {
+      const user = await mongoService.getUserByPhone(phoneNumber);
+      if (!user?.id) return;
+      const settings = await mongoService.getReminderSettings(user.id);
+      const taara = settings.find((s) => s.reminder_type === "taara");
+      if (taara?.id) {
+        await mongoService.updateReminderSettingById(taara.id, { enabled: false });
+        logger.info(`Tahara reminder disabled for ${phoneNumber}`);
+      }
+    } catch (error) {
+      logger.error(`Error disabling taara reminder for ${phoneNumber}:`, error);
+    }
+  }
+
+  /**
+   * Women's flow: save 7 clean-days reminder.
+   * Sends daily at 09:00; template receives day number (1–7) and today's date (by clean_7_start_date).
+   * @param startDate YYYY-MM-DD in Israel timezone (default: today)
+   */
+  private async saveClean7Reminder(
+    phoneNumber: string,
+    startDate?: string
+  ): Promise<void> {
+    try {
+      let user = await mongoService.getUserByPhone(phoneNumber);
+      if (!user) {
+        user = await mongoService.createUser({
+          phone_number: phoneNumber,
+          status: "active",
+          timezone: undefined,
+          location: undefined,
+          gender: undefined,
+        });
+      }
+      if (!user.id) {
+        throw new Error("User not found");
+      }
+
+      const start = startDate || timezoneService.getDateInTimezone(ISRAEL_TZ);
+      const timeOfDay = "09:00";
+      const offsetMinutes = this.parseTimeOfDayToMinutes(timeOfDay);
+
+      await mongoService.upsertReminderSetting({
+        user_id: user.id,
+        reminder_type: "clean_7",
+        enabled: true,
+        time_offset_minutes: offsetMinutes,
+        test_time: timeOfDay,
+        clean_7_start_date: start,
+      });
+
+      logger.info(
+        `✅ 7-clean-days reminder saved for ${phoneNumber} at ${timeOfDay}, start_date=${start}`
+      );
+    } catch (error) {
+      logger.error(
+        `Error saving 7-clean-days reminder for ${phoneNumber}:`,
+        error
+      );
+      await twilioService.sendMessage(
+        phoneNumber,
+        "❌ שגיאה בשמירת תזכורת שבעה נקיים. נסה שוב."
+      );
+    }
+  }
+
+  /**
+   * Parses "HH:MM" into minutes from midnight.
+   * Falls back to 0 if parsing fails.
+   */
+  private parseTimeOfDayToMinutes(timeOfDay: string | null): number {
+    if (!timeOfDay) return 0;
+    const match = timeOfDay.match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return 0;
+    const hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    if (Number.isNaN(hours) || Number.isNaN(minutes)) return 0;
+    return hours * 60 + minutes;
   }
 
   /**
@@ -1341,6 +1649,8 @@ export class MessageHandler {
         tefillin: "הנחת תפילין",
         candle_lighting: "הדלקת נרות",
         shema: "זמן קריאת שמע",
+        taara: "הפסק טהרה",
+        clean_7: "שבעה נקיים",
       };
 
       await twilioService.sendMessage(

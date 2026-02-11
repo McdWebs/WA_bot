@@ -305,6 +305,39 @@ export class ReminderScheduler {
             dateStr
           );
           break;
+        case "taara": {
+          // Tahara: send at user-chosen time (stored as test_time or time_offset_minutes from midnight)
+          const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+          const lastSentDate = setting.last_sent_at
+            ? setting.last_sent_at.split("T")[0]
+            : null;
+          if (lastSentDate === israelTodayStr) return false;
+          const timeStr =
+            (setting as any).test_time ||
+            (() => {
+              const mins = setting.time_offset_minutes;
+              const h = Math.floor(Math.abs(mins) / 60) % 24;
+              const m = Math.abs(mins) % 60;
+              return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+            })();
+          return timezoneService.isTimeToSendReminder(timeStr, user.timezone || ISRAEL_TZ);
+        }
+        case "clean_7": {
+          // 7 clean days: send daily at 09:00; template gets day number (1–7) and today's date
+          const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+          const lastSentDate = setting.last_sent_at
+            ? setting.last_sent_at.split("T")[0]
+            : null;
+          if (lastSentDate === israelTodayStr) return false;
+          const startDate = (setting as any).clean_7_start_date as string | undefined;
+          if (!startDate) return false;
+          const start = new Date(startDate + "T12:00:00Z").getTime();
+          const today = new Date(israelTodayStr + "T12:00:00Z").getTime();
+          const daysDiff = Math.floor((today - start) / (24 * 60 * 60 * 1000));
+          const dayNumber = daysDiff + 1;
+          if (dayNumber < 1 || dayNumber > 7) return false;
+          return timezoneService.isTimeToSendReminder("09:00", user.timezone || ISRAEL_TZ);
+        }
         default:
           return false;
       }
@@ -487,6 +520,43 @@ export class ReminderScheduler {
             dateStr
           );
           break;
+        case "taara": {
+          const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+          const lastSentDate = setting.last_sent_at
+            ? setting.last_sent_at.split("T")[0]
+            : null;
+          if (lastSentDate === israelTodayStr) return false;
+          const timeStr =
+            (setting as any).test_time ||
+            (() => {
+              const mins = setting.time_offset_minutes;
+              const h = Math.floor(Math.abs(mins) / 60) % 24;
+              const m = Math.abs(mins) % 60;
+              return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+            })();
+          const [th, tm] = timeStr.split(":").map(Number);
+          const targetMin = th * 60 + tm;
+          const window = config.testMode.triggerWindowMinutes;
+          const diff = Math.abs(currentTimeMinutes - targetMin);
+          return diff <= window;
+        }
+        case "clean_7": {
+          const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+          const lastSentDate = setting.last_sent_at
+            ? setting.last_sent_at.split("T")[0]
+            : null;
+          if (lastSentDate === israelTodayStr) return false;
+          const startDate = (setting as any).clean_7_start_date as string | undefined;
+          if (!startDate) return false;
+          const start = new Date(startDate + "T12:00:00Z").getTime();
+          const today = new Date(israelTodayStr + "T12:00:00Z").getTime();
+          const daysDiff = Math.floor((today - start) / (24 * 60 * 60 * 1000));
+          const dayNumber = daysDiff + 1;
+          if (dayNumber < 1 || dayNumber > 7) return false;
+          const targetMin = 9 * 60 + 0;
+          const diff = Math.abs(currentTimeMinutes - targetMin);
+          return diff <= config.testMode.triggerWindowMinutes;
+        }
         default:
           return false;
       }
@@ -669,6 +739,41 @@ export class ReminderScheduler {
               "1": eventTime,
               "2": reminderTime,
             }
+          );
+          break;
+        }
+
+        case "taara": {
+          const sunsetTime =
+            (await hebcalService.getSunsetTime(location, todayStr)) || "18:00";
+          logger.info(
+            `Sending taara reminder to ${user.phone_number} (sunset=${sunsetTime})`
+          );
+          await twilioService.sendTemplateMessage(
+            user.phone_number,
+            "taaraFinalMessage",
+            { "1": sunsetTime }
+          );
+          break;
+        }
+
+        case "clean_7": {
+          const startDate = (setting as any).clean_7_start_date as string | undefined;
+          if (!startDate) {
+            logger.warn(`clean_7 reminder ${setting.id} has no clean_7_start_date`);
+            return;
+          }
+          const start = new Date(startDate + "T12:00:00Z").getTime();
+          const today = new Date(todayStr + "T12:00:00Z").getTime();
+          const daysDiff = Math.floor((today - start) / (24 * 60 * 60 * 1000));
+          const dayNumber = String(daysDiff + 1);
+          logger.info(
+            `Sending clean_7 reminder to ${user.phone_number} (day ${dayNumber}, date=${todayStr})`
+          );
+          await twilioService.sendTemplateMessage(
+            user.phone_number,
+            "clean7FinalMessage",
+            { "1": dayNumber }
           );
           break;
         }

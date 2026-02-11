@@ -41,6 +41,11 @@ export const config = {
     manageReminders: process.env.WHATSAPP_TEMPLATE_MANAGE_REMINDERS || "",
     city_picker: process.env.CITY_PICKER || "",
     candleLightingTimePicker: process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_TIME_PICKER || "",
+    // Women's flows – tahara / 7 clean days
+    taaraTimePicker: process.env.TAARA_TIME_CHOSE_REMAINDER_TIME || "",
+    taaraFinalMessage: process.env.TAARA_TIME_FINAL_MESSAGE || "",
+    clean7FinalMessage: process.env.CLEAN_7_FINAL_MESSAGE || "",
+    clean7StartTaaraTime: process.env.CLEAN_7_START_TAARA_TIME || "",
     // Final reminder messages (used to avoid WhatsApp 24-hour freeform limits)
     shemaFinalMessage: process.env.WHATSAPP_TEMPLATE_SHEMA_final_message || "",
     tefilinFinalMessage: process.env.WHATSAPP_TEMPLATE_TEFILIN_final_message || "",
