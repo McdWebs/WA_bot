@@ -53,8 +53,6 @@ export const config = {
     tefilinFinalMessage: process.env.WHATSAPP_TEMPLATE_TEFILIN_final_message || "",
     candleLightingFinalMessage:
       process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_final_message || "",
-    candleLightingFinalMessageWomen:
-      process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_final_message_WOMEN || "",
   },
 
   hebcal: {
