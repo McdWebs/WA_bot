@@ -40,6 +40,7 @@ export class TwilioService {
       | "complete"
       | "genderQuestion"
       | "mainMenu"
+      | "womanMenu"
       | "tefillinTimePicker"
       | "cityPicker"
       | "shemaTimePicker"

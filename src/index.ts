@@ -173,47 +173,52 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
       const user = await mongoService.getUserByPhone(phoneNumber);
 
       if (!user) {
-        // New user - send welcome template IMMEDIATELY, wait for it to complete, then send menu
+        // New user - create immediately, send welcome, then ask for gender (once)
+        await mongoService.createUser({
+          phone_number: phoneNumber,
+          status: "active",
+          timezone: undefined,
+          location: undefined,
+        });
+
+        // Send welcome template IMMEDIATELY, wait for it to complete, then send gender question
         await twilioService.sendTemplateMessage(phoneNumber, "welcome");
-        logger.info(`✅ Welcome template sent, waiting before sending menu for ${phoneNumber}`);
+        logger.info(`✅ Welcome template sent, waiting before sending gender question for ${phoneNumber}`);
 
         // Wait longer to ensure welcome template is fully processed and delivered before sending menu
         // WhatsApp may process messages out of order if sent too quickly
         // Increased delay to 3 seconds to ensure proper sequencing
         await new Promise(resolve => setTimeout(resolve, 3000));
 
-        const gender: Gender = "prefer_not_to_say";
-        await messageHandler.sendMainMenu(phoneNumber, gender);
+        // Ask for gender once; actual menu will be sent after user clicks
+        await twilioService.sendTemplateMessage(phoneNumber, "genderQuestion");
         const templateSendTime = Date.now() - templateSendStartTime;
-        logger.info(`⚡ Welcome + Menu templates sent in ${templateSendTime}ms for new user ${phoneNumber} (fast path)`);
-
-        // Create user in background (non-critical)
-        setImmediate(() => {
-          mongoService.createUser({
-            phone_number: phoneNumber,
-            status: "active",
-            timezone: undefined,
-            location: undefined,
-          }).catch((err) => {
-            logger.error(`Background user creation error:`, err);
-          });
-        });
+        logger.info(`⚡ Welcome + Gender Question templates sent in ${templateSendTime}ms for new user ${phoneNumber} (fast path)`);
         return;
       }
 
-      // Existing user - send welcome template, wait for it to complete, then send menu
+      // Existing user - send welcome template, wait for it to complete, then:
+      // - If gender not set: send gender question (once)
+      // - If gender set: send appropriate main menu (male/female)
       await twilioService.sendTemplateMessage(phoneNumber, "welcome");
-      logger.info(`✅ Welcome template sent, waiting before sending menu for ${phoneNumber}`);
+      logger.info(`✅ Welcome template sent, waiting before next step for ${phoneNumber}`);
 
       // Wait longer to ensure welcome template is fully processed and delivered before sending menu
       // WhatsApp may process messages out of order if sent too quickly
       // Increased delay to 3 seconds to ensure proper sequencing
       await new Promise(resolve => setTimeout(resolve, 3000));
 
-      const userGender: Gender = (user.gender as Gender) || "prefer_not_to_say";
-      await messageHandler.sendMainMenu(phoneNumber, userGender);
-      const templateSendTime = Date.now() - templateSendStartTime;
-      logger.info(`⚡ Welcome + Menu templates sent in ${templateSendTime}ms for user ${phoneNumber} (conversation start)`);
+      if (!user.gender) {
+        // Ask for gender only once per user
+        await twilioService.sendTemplateMessage(phoneNumber, "genderQuestion");
+        const templateSendTime = Date.now() - templateSendStartTime;
+        logger.info(`⚡ Welcome + Gender Question templates sent in ${templateSendTime}ms for user ${phoneNumber} (missing gender)`);
+      } else {
+        const userGender: Gender = user.gender as Gender;
+        await messageHandler.sendMainMenu(phoneNumber, userGender);
+        const templateSendTime = Date.now() - templateSendStartTime;
+        logger.info(`⚡ Welcome + Menu templates sent in ${templateSendTime}ms for user ${phoneNumber} (conversation start with gender ${userGender})`);
+      }
 
       // Don't process the message - user will click button from menu template
       // Button clicks will be handled separately as interactive messages

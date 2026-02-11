@@ -26,8 +26,14 @@ export const config = {
   templates: {
     welcome: process.env.WHATSAPP_TEMPLATE_WELCOME!,
     complete: process.env.WHATSAPP_TEMPLATE_COMPLETE || "",
-    genderQuestion: process.env.WHATSAPP_TEMPLATE_GENDER_QUESTION_V3 || "",
+    // Gender selection question (new template name takes precedence if set)
+    genderQuestion:
+      process.env.GENDER_QUESTION_MENU ||
+      process.env.WHATSAPP_TEMPLATE_GENDER_QUESTION_V3 ||
+      "",
+    // Main menus
     mainMenu: process.env.WHATSAPP_TEMPLATE_MENU || "",
+    womanMenu: process.env.WOMEAN_MENU || "",
     tefillinTimePicker: process.env.WHATSAPP_TEMPLATE_TEFILIN_TIME_PICKER || "",
     cityPicker: process.env.WHATSAPP_TEMPLATE_CITY_PICKER || "",
     shemaTimePicker: process.env.WHATSAPP_TEMPLATE_SHEMA_TIME_PICKER_V2 || "",

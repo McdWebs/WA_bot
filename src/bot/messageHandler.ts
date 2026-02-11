@@ -276,9 +276,14 @@ export class MessageHandler {
       // Quick Reply templates don't support variables - buttons are static
       // The template should have all buttons defined, and we'll handle filtering on the backend
       // based on the button the user clicks
+      const templateKey =
+        gender === "female"
+          ? "womanMenu"
+          : "mainMenu";
+
       await twilioService.sendTemplateMessage(
         phoneNumber,
-        "mainMenu"
+        templateKey
         // No variables - Quick Reply templates have static button text
       );
 
