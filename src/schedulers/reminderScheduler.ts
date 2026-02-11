@@ -667,6 +667,11 @@ export class ReminderScheduler {
               ? "08:00"
               : timezoneService.calculateReminderTime(candleTime, offset);
 
+          const candleFinalKey =
+            user.gender === "female" && config.templates.candleLightingFinalMessageWomen?.trim()
+              ? "candleLightingFinalMessageWomen"
+              : "candleLightingFinalMessage";
+
           if (!user.location || user.location === "not_specified") {
             const cities = [
               "Jerusalem",
@@ -687,7 +692,7 @@ export class ReminderScheduler {
                 );
                 await twilioService.sendTemplateMessage(
                   user.phone_number,
-                  "candleLightingFinalMessage",
+                  candleFinalKey,
                   { "1": city, "2": candleTime, "3": reminderTime }
                 );
               }
@@ -704,7 +709,7 @@ export class ReminderScheduler {
               );
               await twilioService.sendTemplateMessage(
                 user.phone_number,
-                "candleLightingFinalMessage",
+                candleFinalKey,
                 {
                   "1": user.location,
                   "2": candleTime,

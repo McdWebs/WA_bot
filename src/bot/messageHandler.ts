@@ -406,13 +406,16 @@ export class MessageHandler {
           (normalizedButton.includes("7") || normalizedButton.includes("clean")));
 
       // Check if this is a main menu selection (reminder type)
-      // Candle lighting: accept same payload from main menu and from woman menu (e.g. candle_lighting_woman, shabbat_candles)
+      // Candle lighting: accept same payload from main menu and from woman menu (e.g. candle_lighting_woman, candel_time, shabbat_candles)
       const isCandleLightingSelection =
         normalizedButton === "candle_lighting" ||
         normalizedButton === "candle_lighting_woman" ||
+        normalizedButton === "candel_time" ||
+        normalizedButton === "candle_time" ||
         normalizedButton === "shabbat_candles" ||
         normalizedButton === "candles" ||
-        (normalizedButton.includes("candle") && !normalizedButton.includes("edit"));
+        (normalizedButton.includes("candle") && !normalizedButton.includes("edit")) ||
+        (normalizedButton.includes("candel") && !normalizedButton.includes("edit"));
       const isMainMenuSelection =
         normalizedButton === "tefillin" ||
         isCandleLightingSelection ||
@@ -1208,8 +1211,12 @@ export class MessageHandler {
         `📤 Sending candle lighting time picker with candle time ${formattedTime} for location ${location} on date ${date} to ${phoneNumber}`
       );
 
-      // Send template with candle lighting time as variable {{1}}
-      await twilioService.sendTemplateMessage(phoneNumber, "candleLightingTimePicker", {
+      // Use women's template for female users, default for others
+      const timePickerKey =
+        user?.gender === "female" && config.templates.candleLightingTimePickerWomen?.trim()
+          ? "candleLightingTimePickerWomen"
+          : "candleLightingTimePicker";
+      await twilioService.sendTemplateMessage(phoneNumber, timePickerKey, {
         "1": formattedTime,
       });
       logger.debug(`Candle lighting time picker sent to ${phoneNumber}`);
@@ -1471,10 +1478,14 @@ export class MessageHandler {
             : candleTime
               ? timezoneService.calculateReminderTime(candleTime, timeOffsetMinutes)
               : "08:00";
-        if (config.templates.candleLightingFinalMessage?.trim()) {
+        const finalMessageKey =
+          user.gender === "female" && config.templates.candleLightingFinalMessageWomen?.trim()
+            ? "candleLightingFinalMessageWomen"
+            : "candleLightingFinalMessage";
+        if (config.templates[finalMessageKey as keyof typeof config.templates]?.trim()) {
           await twilioService.sendTemplateMessage(
             phoneNumber,
-            "candleLightingFinalMessage",
+            finalMessageKey as "candleLightingFinalMessage" | "candleLightingFinalMessageWomen",
             {
               "1": location,
               "2": candleTime || "18:00",

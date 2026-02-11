@@ -48,9 +48,11 @@ export class TwilioService {
       | "manageReminders"
       | "city_picker"
       | "candleLightingTimePicker"
+      | "candleLightingTimePickerWomen"
       | "shemaFinalMessage"
       | "tefilinFinalMessage"
       | "candleLightingFinalMessage"
+      | "candleLightingFinalMessageWomen"
       // Women's flows – tahara / 7 clean days
       | "taaraTimePicker"
       | "taaraFinalMessage"

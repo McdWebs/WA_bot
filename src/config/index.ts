@@ -41,6 +41,8 @@ export const config = {
     manageReminders: process.env.WHATSAPP_TEMPLATE_MANAGE_REMINDERS || "",
     city_picker: process.env.CITY_PICKER || "",
     candleLightingTimePicker: process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_TIME_PICKER || "",
+    candleLightingTimePickerWomen: process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_TIME_PICKER_WOMEN || "",
+    candleLightingFinalMessageWomen: process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_final_message_WOMEN || "",
     // Women's flows – tahara / 7 clean days
     taaraTimePicker: process.env.TAARA_TIME_CHOSE_REMAINDER_TIME || "",
     taaraFinalMessage: process.env.TAARA_TIME_FINAL_MESSAGE || "",
@@ -51,6 +53,8 @@ export const config = {
     tefilinFinalMessage: process.env.WHATSAPP_TEMPLATE_TEFILIN_final_message || "",
     candleLightingFinalMessage:
       process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_final_message || "",
+    candleLightingFinalMessageWomen:
+      process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_final_message_WOMEN || "",
   },
 
   hebcal: {
