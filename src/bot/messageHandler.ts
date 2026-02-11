@@ -406,9 +406,16 @@ export class MessageHandler {
           (normalizedButton.includes("7") || normalizedButton.includes("clean")));
 
       // Check if this is a main menu selection (reminder type)
+      // Candle lighting: accept same payload from main menu and from woman menu (e.g. candle_lighting_woman, shabbat_candles)
+      const isCandleLightingSelection =
+        normalizedButton === "candle_lighting" ||
+        normalizedButton === "candle_lighting_woman" ||
+        normalizedButton === "shabbat_candles" ||
+        normalizedButton === "candles" ||
+        (normalizedButton.includes("candle") && !normalizedButton.includes("edit"));
       const isMainMenuSelection =
         normalizedButton === "tefillin" ||
-        normalizedButton === "candle_lighting" ||
+        isCandleLightingSelection ||
         normalizedButton === "shema";
 
       // Check if this is from the "manage reminders" menu or button
@@ -484,8 +491,8 @@ export class MessageHandler {
           // For tefillin, first ask for city, then time picker will be based on that city
           this.creatingReminderType.set(phoneNumber, "tefillin");
           await this.sendCityPicker(phoneNumber, "tefillin");
-        } else if (normalizedButton === "candle_lighting") {
-          // For candle lighting, also ask for city first
+        } else if (isCandleLightingSelection) {
+          // For candle lighting (main menu or woman menu), ask for city first
           this.creatingReminderType.set(phoneNumber, "candle_lighting");
           await this.sendCityPicker(phoneNumber, "candle_lighting");
         } else if (normalizedButton === "shema") {
@@ -548,6 +555,56 @@ export class MessageHandler {
           await this.sendTimePickerForSunset(
             phoneNumber,
             user.location || "Jerusalem"
+          );
+        }
+      } else if (
+        this.femaleFlowMode.has(phoneNumber) &&
+        this.isTaharaTimePickerButton(normalizedButton, cleanButton, buttonIdentifier)
+      ) {
+        // Women's flow: tahara time picker (8:00 / 30 min / 1 hour before sunset) – handle BEFORE generic time picker
+        const mode = this.femaleFlowMode.get(phoneNumber)!;
+        const user = await mongoService.getUserByPhone(phoneNumber);
+        const location = user?.location || this.inferLocationFromPhoneNumber(phoneNumber);
+        const todayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+        const sunsetTime = await hebcalService.getSunsetTime(location, todayStr) || "18:00";
+
+        let timeOfDay: string;
+        if (this.isTaharaMorningOption(normalizedButton, cleanButton, buttonIdentifier)) {
+          timeOfDay = "08:00";
+        } else if (this.isTahara30MinOption(normalizedButton, cleanButton, buttonIdentifier)) {
+          timeOfDay = this.subtractMinutesFromTime(sunsetTime, 30);
+        } else if (this.isTahara60MinOption(normalizedButton, cleanButton, buttonIdentifier)) {
+          timeOfDay = this.subtractMinutesFromTime(sunsetTime, 60);
+        } else {
+          logger.warn(
+            `Tahara time button not mapped for ${phoneNumber}: "${buttonIdentifier}"`
+          );
+          this.femaleFlowMode.delete(phoneNumber);
+          await twilioService.sendMessage(
+            phoneNumber,
+            "❌ לא זוהה זמן. אנא בחרי 8:00, 30 דקות או שעה לפני השקיעה."
+          );
+          return;
+        }
+
+        logger.info(
+          `👩‍🧕 Tahara time selected (picker) for ${phoneNumber}: ${timeOfDay}, mode=${mode}`
+        );
+        await twilioService.sendMessage(phoneNumber, "⏳ שומר את התזכורת...");
+        await this.saveTaaraReminder(phoneNumber, timeOfDay);
+        this.femaleFlowMode.delete(phoneNumber);
+
+        if (mode === "taara_plus_clean7") {
+          await twilioService.sendTemplateMessage(
+            phoneNumber,
+            "clean7StartTaaraTime",
+            { "1": sunsetTime }
+          );
+        } else {
+          await twilioService.sendTemplateMessage(
+            phoneNumber,
+            "taaraFinalMessage",
+            { "1": sunsetTime }
           );
         }
       } else if (isTimePickerSelection) {
@@ -1580,6 +1637,88 @@ export class MessageHandler {
         "❌ שגיאה בשמירת תזכורת שבעה נקיים. נסה שוב."
       );
     }
+  }
+
+  /**
+   * Returns HH:MM for (time - minutes). time is "HH:MM".
+   */
+  private subtractMinutesFromTime(time: string, minutes: number): string {
+    const m = time.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return "18:00";
+    let h = parseInt(m[1], 10);
+    let min = parseInt(m[2], 10);
+    let total = h * 60 + min - minutes;
+    if (total < 0) total += 24 * 60;
+    const nh = Math.floor(total / 60) % 24;
+    const nm = total % 60;
+    return `${nh.toString().padStart(2, "0")}:${nm.toString().padStart(2, "0")}`;
+  }
+
+  /** True when in tahara flow and button is one of: 8:00, morning, 30, 60, one_hour (and variants). */
+  private isTaharaTimePickerButton(
+    normalizedButton: string,
+    cleanButton: string,
+    buttonIdentifier: string
+  ): boolean {
+    return (
+      this.isTaharaMorningOption(normalizedButton, cleanButton, buttonIdentifier) ||
+      this.isTahara30MinOption(normalizedButton, cleanButton, buttonIdentifier) ||
+      this.isTahara60MinOption(normalizedButton, cleanButton, buttonIdentifier)
+    );
+  }
+
+  private isTaharaMorningOption(
+    normalizedButton: string,
+    cleanButton: string,
+    buttonIdentifier: string
+  ): boolean {
+    const id = buttonIdentifier.trim().toLowerCase();
+    return (
+      normalizedButton === "morning" ||
+      normalizedButton === "8:00" ||
+      normalizedButton === "08:00" ||
+      cleanButton === "8:00" ||
+      cleanButton === "08:00" ||
+      id === "8:00" ||
+      id === "08:00" ||
+      id === "morning"
+    );
+  }
+
+  private isTahara30MinOption(
+    normalizedButton: string,
+    cleanButton: string,
+    buttonIdentifier: string
+  ): boolean {
+    const id = buttonIdentifier.trim().toLowerCase();
+    return (
+      normalizedButton === "30" ||
+      cleanButton === "30" ||
+      id === "30" ||
+      id === "30_dakot" ||
+      normalizedButton === "30_dakot" ||
+      /30\s*דקות/.test(buttonIdentifier) ||
+      /\b30\b/.test(id)
+    );
+  }
+
+  private isTahara60MinOption(
+    normalizedButton: string,
+    cleanButton: string,
+    buttonIdentifier: string
+  ): boolean {
+    const id = buttonIdentifier.trim().toLowerCase();
+    return (
+      normalizedButton === "60" ||
+      normalizedButton === "one_hour" ||
+      cleanButton === "60" ||
+      cleanButton === "one_hour" ||
+      id === "60" ||
+      id === "one_hour" ||
+      id === "1_hour" ||
+      /1\s*שעה|שעה\s*לפני/.test(buttonIdentifier) ||
+      /\b60\b/.test(id)
+    );
   }
 
   /**

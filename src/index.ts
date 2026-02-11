@@ -197,9 +197,19 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
         return;
       }
 
-      // Existing user - send welcome template, wait for it to complete, then:
-      // - If gender not set: send gender question (once)
-      // - If gender set: send appropriate main menu (male/female)
+      // Existing user: try to handle as command first (e.g. "הדלקת נרות", "תפילין", "הצג תזכורות")
+      await messageHandler.handleIncomingMessage(phoneNumber, messageBody);
+      const trimmedBody = messageBody.trim();
+      const isCommandLike =
+        /נרות|תפילין|שמע|תזכורת|הצג|הדלקת|חדשה|חזרה|candle/i.test(trimmedBody) ||
+        (trimmedBody.includes("תזכורות") || trimmedBody.includes("הצג"));
+      if (isCommandLike) {
+        const totalProcessTime = Date.now() - processStartTime;
+        logger.info(`✅ Command-like text processed for ${phoneNumber} in ${totalProcessTime}ms (no welcome+menu)`);
+        return;
+      }
+
+      // No command matched – send welcome template, then menu
       await twilioService.sendTemplateMessage(phoneNumber, "welcome");
       logger.info(`✅ Welcome template sent, waiting before next step for ${phoneNumber}`);
 
@@ -219,9 +229,6 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
         const templateSendTime = Date.now() - templateSendStartTime;
         logger.info(`⚡ Welcome + Menu templates sent in ${templateSendTime}ms for user ${phoneNumber} (conversation start with gender ${userGender})`);
       }
-
-      // Don't process the message - user will click button from menu template
-      // Button clicks will be handled separately as interactive messages
 
       const totalProcessTime = Date.now() - processStartTime;
       logger.info(`✅ Welcome + Menu templates sent in ${totalProcessTime}ms for ${phoneNumber}`);
