@@ -199,36 +199,55 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
       }
 
       // Existing user: try to handle as command first (e.g. "הדלקת נרות", "תפילין", "הצג תזכורות", "הגדרות")
-      // Capture settings state BEFORE and AFTER handling, so we can detect when a settings interaction just happened,
-      // even if the handler cleared the settings state (e.g. option 2/3 which exit settings mode).
+      // Capture settings & reminder state BEFORE and AFTER handling, so we can detect when a flow is active.
       const previousSettingsState = settingsStateManager.getState(phoneNumber);
-      await messageHandler.handleIncomingMessage(phoneNumber, messageBody);
+      const previousReminderState = reminderStateManager.getState(phoneNumber);
+
+      const handlerResponse = await messageHandler.handleIncomingMessage(phoneNumber, messageBody);
 
       const currentSettingsState = settingsStateManager.getState(phoneNumber);
-      if (previousSettingsState || currentSettingsState) {
+      const currentReminderState = reminderStateManager.getState(phoneNumber);
+
+      // If handler returned a non-empty string, send it as a plain text reply.
+      if (handlerResponse && handlerResponse.trim() !== "") {
+        await twilioService.sendMessage(phoneNumber, handlerResponse);
+        const totalProcessTime = Date.now() - processStartTime;
         logger.info(
-          `⚙️ User ${phoneNumber} is in or just used settings mode (prev=${previousSettingsState?.mode || "none"}, current=${currentSettingsState?.mode || "none"}) – skipping welcome/menu auto-send`
+          `✅ Text message processed for existing user ${phoneNumber} in ${totalProcessTime}ms with direct handler response`
         );
         return;
       }
 
+      // If user is (or was just) in settings/reminder flow, do NOT auto-send welcome/menu/settings.
+      if (previousSettingsState || currentSettingsState || previousReminderState || currentReminderState) {
+        logger.info(
+          `⚙️ User ${phoneNumber} is in or just used a flow (settings/reminders) – skipping auto welcome/menu/settings`
+        );
+        const totalProcessTime = Date.now() - processStartTime;
+        logger.info(
+          `✅ Text message processed for existing user ${phoneNumber} in ${totalProcessTime}ms (no auto templates due to active flow)`
+        );
+        return;
+      }
+
+      // At this point: existing user, no active flow, no specific command matched → treat as conversation start.
       const trimmedBody = messageBody.trim();
       const isCommandLike =
         /נרות|תפילין|שמע|תזכורת|הצג|הדלקת|חדשה|חזרה|הגדרות|candle/i.test(trimmedBody) ||
         (trimmedBody.includes("תזכורות") || trimmedBody.includes("הצג"));
       if (isCommandLike) {
         const totalProcessTime = Date.now() - processStartTime;
-        logger.info(`✅ Command-like text processed for ${phoneNumber} in ${totalProcessTime}ms (no welcome+menu)`);
+        logger.info(
+          `✅ Command-like text processed for ${phoneNumber} in ${totalProcessTime}ms (no welcome/menu auto flow)`
+        );
         return;
       }
 
-      // No command matched – send welcome template, then menu/settings for existing users
+      // Conversation start for existing user: send welcome once, then either gender question or menu+settings.
       await twilioService.sendTemplateMessage(phoneNumber, "welcome");
-      logger.info(`✅ Welcome template sent, waiting before next step for ${phoneNumber}`);
+      logger.info(`✅ Welcome template sent, waiting before next step for existing user ${phoneNumber}`);
 
-      // Wait longer to ensure welcome template is fully processed and delivered before sending menu/settings
-      // WhatsApp may process messages out of order if sent too quickly
-      // Increased delay to 3 seconds to ensure proper sequencing
+      // Wait to ensure welcome template is delivered before sending next templates (WhatsApp ordering issues).
       await new Promise((resolve) => setTimeout(resolve, 3000));
 
       if (!user.gender) {
@@ -236,7 +255,7 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
         await twilioService.sendTemplateMessage(phoneNumber, "genderQuestion");
         const templateSendTime = Date.now() - templateSendStartTime;
         logger.info(
-          `⚡ Welcome + Gender Question templates sent in ${templateSendTime}ms for user ${phoneNumber} (missing gender)`
+          `⚡ Welcome + Gender Question templates sent in ${templateSendTime}ms for existing user ${phoneNumber} (missing gender)`
         );
       } else {
         const userGender: Gender = user.gender as Gender;
@@ -253,12 +272,14 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
 
         const templateSendTime = Date.now() - templateSendStartTime;
         logger.info(
-          `⚡ Welcome + Menu + Settings text sent in ${templateSendTime}ms for user ${phoneNumber} (conversation start with gender ${userGender})`
+          `⚡ Welcome + Menu + Settings text sent in ${templateSendTime}ms for existing user ${phoneNumber} (conversation start with gender ${userGender})`
         );
       }
 
       const totalProcessTime = Date.now() - processStartTime;
-      logger.info(`✅ Welcome + Menu (+ Settings when applicable) sent in ${totalProcessTime}ms for ${phoneNumber}`);
+      logger.info(
+        `✅ Welcome + Menu (+ Settings when applicable) sent in ${totalProcessTime}ms for existing user ${phoneNumber}`
+      );
       return;
     }
 
