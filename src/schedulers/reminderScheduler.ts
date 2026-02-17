@@ -334,7 +334,9 @@ export class ReminderScheduler {
           const start = new Date(startDate + "T12:00:00Z").getTime();
           const today = new Date(israelTodayStr + "T12:00:00Z").getTime();
           const daysDiff = Math.floor((today - start) / (24 * 60 * 60 * 1000));
-          const dayNumber = daysDiff + 1;
+          // Start counting from the *day after* the user chose the reminder
+          // (i.e., first reminder = dayNumber 1 when daysDiff === 1)
+          const dayNumber = daysDiff;
           if (dayNumber < 1 || dayNumber > 7) return false;
           return timezoneService.isTimeToSendReminder("09:00", user.timezone || ISRAEL_TZ);
         }
@@ -551,7 +553,8 @@ export class ReminderScheduler {
           const start = new Date(startDate + "T12:00:00Z").getTime();
           const today = new Date(israelTodayStr + "T12:00:00Z").getTime();
           const daysDiff = Math.floor((today - start) / (24 * 60 * 60 * 1000));
-          const dayNumber = daysDiff + 1;
+          // Start counting from the *day after* the user chose the reminder
+          const dayNumber = daysDiff;
           if (dayNumber < 1 || dayNumber > 7) return false;
           const targetMin = 9 * 60 + 0;
           const diff = Math.abs(currentTimeMinutes - targetMin);

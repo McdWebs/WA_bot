@@ -446,14 +446,9 @@ export class MessageHandler {
     buttonIdentifier: string
   ): Promise<void> {
     try {
-      // If user is in settings flow, ignore all interactive buttons that are not part of settings
-      const currentSettingsState = settingsStateManager.getState(phoneNumber);
-      if (currentSettingsState) {
-        logger.info(
-          `⚙️ Ignoring interactive button "${buttonIdentifier}" for ${phoneNumber} because user is in settings mode (${currentSettingsState.mode})`
-        );
-        return;
-      }
+      // Any interactive button click moves the user into a non-settings flow.
+      // Clear settings state so the conversation doesn't stay "stuck" in settings.
+      settingsStateManager.clearState(phoneNumber);
 
       logger.info(
         `🔘 Handling interactive button click from ${phoneNumber}: "${buttonIdentifier}"`
@@ -834,12 +829,14 @@ export class MessageHandler {
           }
         }
       } else if (isTaaraMenuSelection) {
-        // Women's flow: Hefsek Tahara – ask user to choose time (bot receives sunset)
+        // Women's flow: Hefsek Tahara – FIRST ask user to choose city (bot later uses sunset for that city)
         logger.info(
           `👩‍🧕 Tahara flow started (hefsek only) for ${phoneNumber}, button="${buttonIdentifier}"`
         );
         this.femaleFlowMode.set(phoneNumber, "taara");
-        await this.sendTaaraTimePicker(phoneNumber);
+        // Use city picker template so user explicitly chooses city for sunset
+        this.creatingReminderType.set(phoneNumber, "taara");
+        await this.sendCityPicker(phoneNumber, "taara");
       } else if (isClean7MenuSelection) {
         // Women's flow: Seven clean days – reminder by date (how many days passed); start_date = today
         logger.info(
@@ -851,12 +848,13 @@ export class MessageHandler {
           "1": "1",
         });
       } else if (isTaaraPlusClean7MenuSelection) {
-        // Women's flow: Hefsek + 7 clean days – first ask for hefsek time (same picker, then CLEAN_7_START_TAARA_TIME with button to activate 7)
+        // Women's flow: Hefsek + 7 clean days – FIRST ask for city, then hefsek time picker, then CLEAN_7_START_TAARA_TIME
         logger.info(
           `👩‍🧕 Tahara + 7 clean days flow started for ${phoneNumber}, button="${buttonIdentifier}"`
         );
         this.femaleFlowMode.set(phoneNumber, "taara_plus_clean7");
-        await this.sendTaaraTimePicker(phoneNumber);
+        this.creatingReminderType.set(phoneNumber, "taara");
+        await this.sendCityPicker(phoneNumber, "taara");
       } else if (
         normalizedButton === "start_7_clean" ||
         normalizedButton === "activate_clean7" ||
@@ -954,10 +952,19 @@ export class MessageHandler {
         } else if (currentReminderType === "shema") {
           // Shema flow: save location, then show shema time picker
           await this.sendShemaTimePicker(phoneNumber);
+        } else if (currentReminderType === "taara") {
+          // Women's flows (hefsek / hefsek+7): save city, then show tahara time picker with correct sunset
+          logger.info(
+            `👩‍🧕 City "${city}" selected for tahara flow for ${phoneNumber} – sending taara time picker`
+          );
+          // Don't change femaleFlowMode here – it already differentiates hefsek vs hefsek+7
+          await this.sendTaaraTimePicker(phoneNumber);
         } else {
           logger.info(
             `⚠️ City "${city}" selected but no active reminder type for ${phoneNumber} - location updated only`
           );
+          // Only in this fallback case do we clear the creatingReminderType
+          this.creatingReminderType.delete(phoneNumber);
         }
       } else {
         logger.info(
