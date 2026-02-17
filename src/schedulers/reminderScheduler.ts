@@ -36,7 +36,7 @@ export class ReminderScheduler {
 
     this.isRunning = true;
     logger.info("Reminder scheduler started");
-    
+
     // TEST MODE: Run immediately on startup for testing
     if (config.testMode.enabled) {
       logger.info("🧪 TEST MODE: Running initial check immediately...");
@@ -58,7 +58,7 @@ export class ReminderScheduler {
       }
 
       logger.info(`🧪 TEST MODE: Starting reminder check at ${new Date().toISOString()}`);
-      
+
       // Get all active reminder settings with user data
       const settings = await mongoService.getAllActiveReminderSettings();
 
@@ -113,7 +113,7 @@ export class ReminderScheduler {
       if (error?.message?.includes("ENOTFOUND") || error?.message?.includes("getaddrinfo")) {
         logger.debug(`MongoDB connection issue (likely temporary): ${error.message}`);
       } else {
-      logger.error("Error checking reminders:", error);
+        logger.error("Error checking reminders:", error);
       }
     }
   }
@@ -795,9 +795,20 @@ export class ReminderScheduler {
       // Update last_sent_at to prevent duplicate sends
       if (setting.id) {
         try {
-          await mongoService.updateReminderSettingById(setting.id, {
+          const updatePayload: Partial<ReminderSetting> = {
             last_sent_at: new Date().toISOString(),
-          });
+          };
+
+          // Taara (hefsek tahara) should be a one-time reminder on the day it was set.
+          // After sending it once, we disable it so it won't fire again on future days.
+          if (setting.reminder_type === "taara") {
+            (updatePayload as any).enabled = false;
+            logger.info(
+              `Disabled taara reminder ${setting.id} after first send to prevent daily repeats`
+            );
+          }
+
+          await mongoService.updateReminderSettingById(setting.id, updatePayload);
           logger.debug(
             `Updated last_sent_at for reminder ${setting.id} to prevent duplicates`
           );

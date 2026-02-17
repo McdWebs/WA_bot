@@ -32,13 +32,12 @@ export const config = {
       process.env.WHATSAPP_TEMPLATE_GENDER_QUESTION_V3 ||
       "",
     // Main menus
-    mainMenu: process.env.WHATSAPP_TEMPLATE_MENU || "",
+    mainMenu: process.env.MAN_MENU || "",
     womanMenu: process.env.WOMEAN_MENU || "",
     tefillinTimePicker: process.env.WHATSAPP_TEMPLATE_TEFILIN_TIME_PICKER || "",
     cityPicker: process.env.WHATSAPP_TEMPLATE_CITY_PICKER || "",
     shemaTimePicker: process.env.WHATSAPP_TEMPLATE_SHEMA_TIME_PICKER_V2 || "",
     reminderList: process.env.WHATSAPP_TEMPLATE_REMINDER_LIST || "",
-    manageReminders: process.env.WHATSAPP_TEMPLATE_MANAGE_REMINDERS || "",
     city_picker: process.env.CITY_PICKER || "",
     candleLightingTimePicker: process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_TIME_PICKER || "",
     candleLightingTimePickerWomen: process.env.WHATSAPP_TEMPLATE_CANDLE_LIGHTING_TIME_PICKER_WOMEN || "",

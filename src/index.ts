@@ -7,6 +7,7 @@ import reminderScheduler from "./schedulers/reminderScheduler";
 import twilioService from "./services/twilio";
 import logger from "./utils/logger";
 import reminderStateManager, { ReminderStateMode } from "./services/reminderStateManager";
+import settingsStateManager, { SettingsStateMode } from "./services/settingsStateManager";
 import mongoService, { connectMongo, closeMongo } from "./services/mongo";
 import { Gender } from "./types";
 import dashboardRouter from "./routes/dashboard";
@@ -82,15 +83,15 @@ app.get("/health", (req, res) => {
 
 // Test endpoint to verify webhook is accessible
 app.get("/webhook/test", (req, res) => {
-  const webhookUrl = config.webhookUrl 
+  const webhookUrl = config.webhookUrl
     ? `${config.webhookUrl}/webhook/whatsapp`
     : "Not configured (set WEBHOOK_URL environment variable)";
-  
+
   res.status(200).json({
     message: "Webhook endpoint is accessible!",
     timestamp: new Date().toISOString(),
     webhookUrl: webhookUrl,
-    webhookStatusUrl: config.webhookUrl 
+    webhookStatusUrl: config.webhookUrl
       ? `${config.webhookUrl}/webhook/status`
       : "Not configured",
   });
@@ -197,11 +198,23 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
         return;
       }
 
-      // Existing user: try to handle as command first (e.g. "הדלקת נרות", "תפילין", "הצג תזכורות")
+      // Existing user: try to handle as command first (e.g. "הדלקת נרות", "תפילין", "הצג תזכורות", "הגדרות")
+      // Capture settings state BEFORE and AFTER handling, so we can detect when a settings interaction just happened,
+      // even if the handler cleared the settings state (e.g. option 2/3 which exit settings mode).
+      const previousSettingsState = settingsStateManager.getState(phoneNumber);
       await messageHandler.handleIncomingMessage(phoneNumber, messageBody);
+
+      const currentSettingsState = settingsStateManager.getState(phoneNumber);
+      if (previousSettingsState || currentSettingsState) {
+        logger.info(
+          `⚙️ User ${phoneNumber} is in or just used settings mode (prev=${previousSettingsState?.mode || "none"}, current=${currentSettingsState?.mode || "none"}) – skipping welcome/menu auto-send`
+        );
+        return;
+      }
+
       const trimmedBody = messageBody.trim();
       const isCommandLike =
-        /נרות|תפילין|שמע|תזכורת|הצג|הדלקת|חדשה|חזרה|candle/i.test(trimmedBody) ||
+        /נרות|תפילין|שמע|תזכורת|הצג|הדלקת|חדשה|חזרה|הגדרות|candle/i.test(trimmedBody) ||
         (trimmedBody.includes("תזכורות") || trimmedBody.includes("הצג"));
       if (isCommandLike) {
         const totalProcessTime = Date.now() - processStartTime;
@@ -209,47 +222,61 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
         return;
       }
 
-      // No command matched – send welcome template, then menu
+      // No command matched – send welcome template, then menu/settings for existing users
       await twilioService.sendTemplateMessage(phoneNumber, "welcome");
       logger.info(`✅ Welcome template sent, waiting before next step for ${phoneNumber}`);
 
-      // Wait longer to ensure welcome template is fully processed and delivered before sending menu
+      // Wait longer to ensure welcome template is fully processed and delivered before sending menu/settings
       // WhatsApp may process messages out of order if sent too quickly
       // Increased delay to 3 seconds to ensure proper sequencing
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise((resolve) => setTimeout(resolve, 3000));
 
       if (!user.gender) {
         // Ask for gender only once per user
         await twilioService.sendTemplateMessage(phoneNumber, "genderQuestion");
         const templateSendTime = Date.now() - templateSendStartTime;
-        logger.info(`⚡ Welcome + Gender Question templates sent in ${templateSendTime}ms for user ${phoneNumber} (missing gender)`);
+        logger.info(
+          `⚡ Welcome + Gender Question templates sent in ${templateSendTime}ms for user ${phoneNumber} (missing gender)`
+        );
       } else {
         const userGender: Gender = user.gender as Gender;
         await messageHandler.sendMainMenu(phoneNumber, userGender);
+
+        // Immediately follow the menu with the free-form settings menu
+        settingsStateManager.setState(phoneNumber, {
+          mode: SettingsStateMode.MAIN_MENU,
+        });
+        await twilioService.sendMessage(
+          phoneNumber,
+          "⚙️ *הגדרות משתמש*\n\nבחר/י מספר פעולה:\n1️⃣ שינוי מגדר\n2️⃣ עריכת / מחיקת תזכורות\n3️⃣ שינוי מיקום\n\nאו שלח/י *ביטול* לחזרה למסך הראשי."
+        );
+
         const templateSendTime = Date.now() - templateSendStartTime;
-        logger.info(`⚡ Welcome + Menu templates sent in ${templateSendTime}ms for user ${phoneNumber} (conversation start with gender ${userGender})`);
+        logger.info(
+          `⚡ Welcome + Menu + Settings text sent in ${templateSendTime}ms for user ${phoneNumber} (conversation start with gender ${userGender})`
+        );
       }
 
       const totalProcessTime = Date.now() - processStartTime;
-      logger.info(`✅ Welcome + Menu templates sent in ${totalProcessTime}ms for ${phoneNumber}`);
+      logger.info(`✅ Welcome + Menu (+ Settings when applicable) sent in ${totalProcessTime}ms for ${phoneNumber}`);
       return;
     }
 
     const totalProcessTime = Date.now() - processStartTime;
     const templateSendTime = Date.now() - templateSendStartTime;
     logger.info(`✅ Message processed in ${totalProcessTime}ms (template send: ${templateSendTime}ms) for ${phoneNumber}`);
-      } catch (error) {
+  } catch (error) {
     logger.error(`❌ Error processing WhatsApp message:`, error);
-        
+
     // Try to send error message to user if we have phone number
-        try {
+    try {
       const From = reqBody?.From || reqBody?.from || reqBody?.FROM;
       if (From) {
         const phoneNumber = From.replace("whatsapp:", "").trim();
-          await twilioService.sendMessage(
-            phoneNumber,
-            "סליחה, אירעה שגיאה. נסה שוב או שלח /menu"
-          );
+        await twilioService.sendMessage(
+          phoneNumber,
+          "סליחה, אירעה שגיאה. נסה שוב או שלח /menu"
+        );
       }
     } catch (fallbackError) {
       logger.error(`❌ Failed to send error fallback:`, fallbackError);
@@ -294,7 +321,7 @@ app.post("/webhook/status", async (req, res) => {
 
     const { updateMessageLogStatus } = await import("./services/messageLog");
     if (MessageSid && MessageStatus) {
-      updateMessageLogStatus(MessageSid, MessageStatus, ErrorCode).catch(() => {});
+      updateMessageLogStatus(MessageSid, MessageStatus, ErrorCode).catch(() => { });
     }
   } catch (error) {
     logger.error("Error handling status callback:", error);

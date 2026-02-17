@@ -8,6 +8,7 @@ import logger from "../utils/logger";
 import { Gender, ReminderType } from "../types";
 import reminderService from "../services/reminderService";
 import reminderStateManager, { ReminderStateMode } from "../services/reminderStateManager";
+import settingsStateManager, { SettingsStateMode } from "../services/settingsStateManager";
 import timezoneService from "../utils/timezone";
 import { config } from "../config";
 
@@ -52,6 +53,92 @@ export class MessageHandler {
       // Handle commands
       if (normalizedMessage.startsWith("/")) {
         return await this.handleCommand(phoneNumber, normalizedMessage);
+      }
+
+      // Check user state for settings flow (free-form settings menu)
+      const settingsState = settingsStateManager.getState(phoneNumber);
+
+      if (settingsState?.mode === SettingsStateMode.MAIN_MENU) {
+        // User is choosing from settings main menu: 1=gender, 2=reminders, 3=location
+        if (/^1\b/.test(normalizedMessage)) {
+          // Change gender
+          settingsStateManager.setState(phoneNumber, {
+            mode: SettingsStateMode.CHANGE_GENDER,
+          });
+          await twilioService.sendMessage(
+            phoneNumber,
+            "⚙️ שינוי מגדר\n\n*בחר/י מגדר:*\n1️⃣ גבר\n2️⃣ אישה\n\nאו שלח/י *ביטול* לחזרה למסך הראשי."
+          );
+          return "";
+        } else if (/^2\b/.test(normalizedMessage)) {
+          // Edit/delete reminders – reuse existing reminder list & flow
+          settingsStateManager.clearState(phoneNumber);
+          await twilioService.sendMessage(
+            phoneNumber,
+            "⏳ טוען את התזכורות שלך..."
+          );
+          const result = await reminderService.listReminders(phoneNumber);
+          if (result && result.trim() !== "") {
+            await twilioService.sendMessage(phoneNumber, result);
+          }
+          return "";
+        } else if (/^3\b/.test(normalizedMessage)) {
+          // Change location – reuse existing city picker template
+          settingsStateManager.clearState(phoneNumber);
+          await this.sendCityPicker(phoneNumber);
+          return "";
+        } else if (
+          normalizedMessage.includes("ביטול") ||
+          normalizedMessage.includes("cancel")
+        ) {
+          settingsStateManager.clearState(phoneNumber);
+          await twilioService.sendMessage(
+            phoneNumber,
+            "תפריט ההגדרות נסגר."
+          );
+          return "";
+        } else {
+          await twilioService.sendMessage(
+            phoneNumber,
+            "אנא בחר/י מספר מהתפריט:\n1️⃣ שינוי מגדר\n2️⃣ עריכת / מחיקת תזכורות\n3️⃣ שינוי מיקום\nאו שלח/י *ביטול* לסגירת התפריט."
+          );
+          return "";
+        }
+      } else if (settingsState?.mode === SettingsStateMode.CHANGE_GENDER) {
+        // User is choosing gender: 1=male, 2=female
+        if (/^1\b/.test(normalizedMessage)) {
+          await mongoService.updateUser(phoneNumber, { gender: "male" });
+          settingsStateManager.clearState(phoneNumber);
+          await twilioService.sendMessage(
+            phoneNumber,
+            "✅ המגדר עודכן ל*גבר*."
+          );
+          return "";
+        } else if (/^2\b/.test(normalizedMessage)) {
+          await mongoService.updateUser(phoneNumber, { gender: "female" });
+          settingsStateManager.clearState(phoneNumber);
+          await twilioService.sendMessage(
+            phoneNumber,
+            "✅ המגדר עודכן ל*אישה*."
+          );
+          return "";
+        } else if (
+          normalizedMessage.includes("ביטול") ||
+          normalizedMessage.includes("cancel")
+        ) {
+          settingsStateManager.clearState(phoneNumber);
+          await twilioService.sendMessage(
+            phoneNumber,
+            "שינוי המגדר בוטל."
+          );
+          return "";
+        } else {
+          await twilioService.sendMessage(
+            phoneNumber,
+            "אנא בחר/י:\n1️⃣ גבר\n2️⃣ אישה\nאו שלח/י *ביטול* לביטול השינוי ולחזרה למסך הראשי."
+          );
+          return "";
+        }
       }
 
       // Check user state for reminder management flow
@@ -228,6 +315,20 @@ export class MessageHandler {
         const gender: Gender = (user.gender as Gender) || "prefer_not_to_say";
         await this.sendMainMenu(phoneNumber, gender);
         return "";
+      } else if (
+        originalMessage.includes("הגדרות") ||
+        normalizedMessage.includes("הגדרות") ||
+        normalizedMessage === "settings"
+      ) {
+        // Free-form settings menu (Hebrew)
+        settingsStateManager.setState(phoneNumber, {
+          mode: SettingsStateMode.MAIN_MENU,
+        });
+        await twilioService.sendMessage(
+          phoneNumber,
+          "⚙️ *הגדרות משתמש*\n\nבחר/י מספר פעולה:\n1️⃣ שינוי מגדר\n2️⃣ עריכת / מחיקת תזכורות\n3️⃣ שינוי מיקום\n\nאו שלח/י *ביטול* לחזרה למסך הראשי."
+        );
+        return "";
       } else if (originalMessage.includes("חזרה") ||
         normalizedMessage.includes("חזרה") ||
         normalizedMessage.includes("back")) {
@@ -322,9 +423,12 @@ export class MessageHandler {
    */
   private async sendManageRemindersMenu(phoneNumber: string): Promise<void> {
     try {
-      logger.debug(`Sending manage reminders menu to ${phoneNumber}`);
-      await twilioService.sendTemplateMessage(phoneNumber, "manageReminders");
-      logger.debug(`Manage reminders menu sent to ${phoneNumber}`);
+      logger.debug(`Sending manage reminders menu (free-form text) to ${phoneNumber}`);
+      await twilioService.sendMessage(
+        phoneNumber,
+        "מה תרצה לעשות?\n\n➕ *תזכורת חדשה* - להוספת תזכורת\n📋 *הצג תזכורות* - לצפייה וניהול התזכורות\n🔙 *חזרה* - לחזרה לתפריט הראשי"
+      );
+      logger.debug(`Manage reminders text menu sent to ${phoneNumber}`);
     } catch (error) {
       logger.error(
         `Error sending manage reminders menu to ${phoneNumber}:`,
@@ -342,6 +446,15 @@ export class MessageHandler {
     buttonIdentifier: string
   ): Promise<void> {
     try {
+      // If user is in settings flow, ignore all interactive buttons that are not part of settings
+      const currentSettingsState = settingsStateManager.getState(phoneNumber);
+      if (currentSettingsState) {
+        logger.info(
+          `⚙️ Ignoring interactive button "${buttonIdentifier}" for ${phoneNumber} because user is in settings mode (${currentSettingsState.mode})`
+        );
+        return;
+      }
+
       logger.info(
         `🔘 Handling interactive button click from ${phoneNumber}: "${buttonIdentifier}"`
       );
@@ -1042,7 +1155,7 @@ export class MessageHandler {
   // Track which reminder type is being created
   private creatingReminderType = new Map<string, ReminderType>();
 
-   // Track current women's-flow mode per user (hefsek only vs hefsek+7)
+  // Track current women's-flow mode per user (hefsek only vs hefsek+7)
   private femaleFlowMode = new Map<string, "taara" | "taara_plus_clean7">();
 
   /**
@@ -1497,9 +1610,9 @@ export class MessageHandler {
         } else {
           // Send simple text confirmation if no template is configured
           const cityName = this.getCityNameInHebrew(city);
-          const timeDesc = timeOption === "morning" ? "8:00" : 
-                          timeOption === "one_hour" ? "שעה לפני שבת" :
-                          timeOption === "two_hours" ? "שעתיים לפני שבת" : "לפני שבת";
+          const timeDesc = timeOption === "morning" ? "8:00" :
+            timeOption === "one_hour" ? "שעה לפני שבת" :
+              timeOption === "two_hours" ? "שעתיים לפני שבת" : "לפני שבת";
           await twilioService.sendMessage(
             phoneNumber,
             `✅ תודה רבה! התזכורת נשמרה במערכת.\n\nסוג: הדלקת נרות שבת\nעיר: ${cityName}\nזמן: ${timeDesc}`
@@ -1509,9 +1622,9 @@ export class MessageHandler {
         // Template failed, but reminder is saved - send simple text confirmation
         logger.warn(`Template send failed for ${phoneNumber}, sending text confirmation instead:`, templateError);
         const cityName = this.getCityNameInHebrew(city);
-        const timeDesc = timeOption === "morning" ? "8:00" : 
-                        timeOption === "one_hour" ? "שעה לפני שבת" :
-                        timeOption === "two_hours" ? "שעתיים לפני שבת" : "לפני שבת";
+        const timeDesc = timeOption === "morning" ? "8:00" :
+          timeOption === "one_hour" ? "שעה לפני שבת" :
+            timeOption === "two_hours" ? "שעתיים לפני שבת" : "לפני שבת";
         await twilioService.sendMessage(
           phoneNumber,
           `✅ תודה רבה! התזכורת נשמרה במערכת.\n\nסוג: הדלקת נרות שבת\nעיר: ${cityName}\nזמן: ${timeDesc}`

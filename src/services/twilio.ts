@@ -45,7 +45,6 @@ export class TwilioService {
       | "cityPicker"
       | "shemaTimePicker"
       | "reminderList"
-      | "manageReminders"
       | "city_picker"
       | "candleLightingTimePicker"
       | "candleLightingTimePickerWomen"
