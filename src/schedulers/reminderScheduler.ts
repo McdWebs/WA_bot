@@ -771,10 +771,22 @@ export class ReminderScheduler {
             logger.warn(`clean_7 reminder ${setting.id} has no clean_7_start_date`);
             return;
           }
+
           const start = new Date(startDate + "T12:00:00Z").getTime();
           const today = new Date(todayStr + "T12:00:00Z").getTime();
           const daysDiff = Math.floor((today - start) / (24 * 60 * 60 * 1000));
-          const dayNumber = String(daysDiff + 1);
+
+          // Keep day numbering consistent with shouldSendReminder:
+          // first reminder day (clean day 1) is when daysDiff === 1, last is when daysDiff === 7.
+          const dayNumberInt = daysDiff;
+          if (dayNumberInt < 1 || dayNumberInt > 7) {
+            logger.info(
+              `clean_7 reminder ${setting.id} for ${user.phone_number} is out of range (day=${dayNumberInt}), skipping send`
+            );
+            return;
+          }
+
+          const dayNumber = String(dayNumberInt);
           logger.info(
             `Sending clean_7 reminder to ${user.phone_number} (day ${dayNumber}, date=${todayStr})`
           );
@@ -809,6 +821,24 @@ export class ReminderScheduler {
             logger.info(
               `Disabled taara reminder ${setting.id} after first send to prevent daily repeats`
             );
+          }
+
+          // clean_7 flow should end after day 7; once we've finished the cycle,
+          // we disable this reminder so it cannot accidentally send "day 8+" messages.
+          if (setting.reminder_type === "clean_7") {
+            const startDate = (setting as any).clean_7_start_date as string | undefined;
+            const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
+            if (startDate) {
+              const start = new Date(startDate + "T12:00:00Z").getTime();
+              const today = new Date(israelTodayStr + "T12:00:00Z").getTime();
+              const daysDiff = Math.floor((today - start) / (24 * 60 * 60 * 1000));
+              if (daysDiff >= 7) {
+                (updatePayload as any).enabled = false;
+                logger.info(
+                  `Disabled clean_7 reminder ${setting.id} for ${user.phone_number} after completing 7 days (daysDiff=${daysDiff})`
+                );
+              }
+            }
           }
 
           await mongoService.updateReminderSettingById(setting.id, updatePayload);
