@@ -1,6 +1,3 @@
-import registrationCommand from "./commands/registration";
-import menuCommand from "./commands/menu";
-// Database layer: use MongoDB instead of Supabase
 import mongoService from "../services/mongo";
 import hebcalService from "../services/hebcal";
 import twilioService from "../services/twilio";

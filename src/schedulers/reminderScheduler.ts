@@ -1,5 +1,4 @@
 import cron from "node-cron";
-// Database layer: use MongoDB instead of Supabase
 import mongoService from "../services/mongo";
 import hebcalService from "../services/hebcal";
 import twilioService from "../services/twilio";

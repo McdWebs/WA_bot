@@ -8,7 +8,7 @@ A WhatsApp bot for sending automated reminders about Hebrew calendar events (sun
 - Configurable reminder settings for each user
 - Automated reminder sending based on user preferences
 - Integration with Hebcal API for Hebrew calendar data
-- Supabase for data storage
+- MongoDB for data storage
 - Twilio WhatsApp API for messaging
 
 ## Setup
@@ -20,49 +20,17 @@ npm install
 
 2. Configure environment variables in `.env` file (already provided)
 
-3. Set up Supabase database tables:
-
-Create the following tables in your Supabase project:
-
-**users table:**
-```sql
-CREATE TABLE users (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  phone_number TEXT UNIQUE NOT NULL,
-  registered_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  timezone TEXT,
-  location TEXT,
-  status TEXT DEFAULT 'pending' CHECK (status IN ('active', 'inactive', 'pending')),
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-```
-
-**reminder_settings table:**
-```sql
-CREATE TABLE reminder_settings (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  reminder_type TEXT NOT NULL CHECK (reminder_type IN ('sunset', 'candle_lighting', 'prayer')),
-  enabled BOOLEAN DEFAULT true,
-  time_offset_minutes INTEGER DEFAULT 0,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(user_id, reminder_type)
-);
-```
-
-4. Configure Twilio webhook:
+3. Configure Twilio webhook:
    - In Twilio Console, set the webhook URL to: `https://your-domain.com/webhook/whatsapp`
    - Use POST method
 
-5. (Optional) Dashboard: set `DASHBOARD_API_KEY` in `.env` and build the dashboard:
+4. (Optional) Dashboard: set `DASHBOARD_API_KEY` in `.env` and build the dashboard:
 ```bash
 cd dashboard && npm install && npm run build && cd ..
 ```
 Then serve the bot; the dashboard is at `http://localhost:3000/dashboard` (log in with your API key).
 
-6. Build and run:
+5. Build and run:
 ```bash
 # Development
 npm run dev

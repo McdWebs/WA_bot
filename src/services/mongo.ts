@@ -1,6 +1,5 @@
 import dns from "dns";
 import { MongoClient, Db, Collection, ObjectId, MongoClientOptions } from "mongodb";
-import { config } from "../config";
 import { User, ReminderSetting } from "../types";
 import logger from "../utils/logger";
 
