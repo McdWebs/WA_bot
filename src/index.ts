@@ -121,6 +121,8 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
     const ButtonPayload = reqBody?.ButtonPayload || reqBody?.buttonPayload;
     const MessageType = reqBody?.MessageType || reqBody?.messageType;
     const ListId = reqBody?.ListId || reqBody?.listId;
+    const Latitude = reqBody?.Latitude ?? reqBody?.latitude;
+    const Longitude = reqBody?.Longitude ?? reqBody?.longitude;
 
     if (!From) {
       logger.error("❌ CRITICAL: From field is missing from webhook!");
@@ -138,7 +140,9 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
     const isInteractive = MessageType === "interactive" || MessageType === "button";
 
     // Log raw webhook data for debugging
-    logger.info(`📥 Webhook data for ${phoneNumber}: MessageType="${MessageType}", Body="${Body.substring(0, 50)}", ButtonPayload="${ButtonPayload}", ButtonText="${ButtonText}", ListId="${ListId}"`);
+    logger.info(
+      `📥 Webhook data for ${phoneNumber}: MessageType="${MessageType}", Body="${Body.substring(0, 50)}", ButtonPayload="${ButtonPayload}", ButtonText="${ButtonText}", ListId="${ListId}", Latitude="${Latitude ?? ""}", Longitude="${Longitude ?? ""}"`
+    );
 
     if (isInteractive) {
       // Interactive/Button message - use ButtonPayload (preferred) or ButtonText
@@ -203,7 +207,48 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
       const previousSettingsState = settingsStateManager.getState(phoneNumber);
       const previousReminderState = reminderStateManager.getState(phoneNumber);
 
-      const handlerResponse = await messageHandler.handleIncomingMessage(phoneNumber, messageBody);
+      const latParsed =
+        Latitude !== undefined &&
+        Latitude !== null &&
+        String(Latitude).trim() !== ""
+          ? parseFloat(String(Latitude))
+          : NaN;
+      const lngParsed =
+        Longitude !== undefined &&
+        Longitude !== null &&
+        String(Longitude).trim() !== ""
+          ? parseFloat(String(Longitude))
+          : NaN;
+      const hasValidLocationPin =
+        Number.isFinite(latParsed) &&
+        Number.isFinite(lngParsed) &&
+        Math.abs(latParsed) <= 90 &&
+        Math.abs(lngParsed) <= 180;
+
+      let handlerResponse = "";
+      if (hasValidLocationPin) {
+        const locationHandled = await messageHandler.handleIncomingLocation(
+          phoneNumber,
+          latParsed,
+          lngParsed
+        );
+        if (locationHandled) {
+          logger.info(
+            `📍 WhatsApp location handled for ${phoneNumber} (lat=${latParsed}, lon=${lngParsed})`
+          );
+          return;
+        }
+        await twilioService.sendMessage(
+          phoneNumber,
+          "לעדכון מיקום: בחרו ״אחר״ ברשימת הערים בתפריט, ואז שלחו מיקום (📎 ← מיקום)."
+        );
+        return;
+      }
+
+      handlerResponse = await messageHandler.handleIncomingMessage(
+        phoneNumber,
+        messageBody
+      );
 
       const currentSettingsState = settingsStateManager.getState(phoneNumber);
       const currentReminderState = reminderStateManager.getState(phoneNumber);

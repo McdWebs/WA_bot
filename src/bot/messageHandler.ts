@@ -213,6 +213,42 @@ export class MessageHandler {
         return "";
       }
 
+      // User chose "custom location" — expect WhatsApp shared location pin (see handleIncomingLocation)
+      if (this.awaitingCustomLocation.has(phoneNumber)) {
+        if (
+          normalizedMessage.includes("ביטול") ||
+          normalizedMessage.includes("cancel")
+        ) {
+          this.awaitingCustomLocation.delete(phoneNumber);
+          this.lastCityPickerContext.delete(phoneNumber);
+          this.creatingReminderType.delete(phoneNumber);
+          this.femaleFlowMode.delete(phoneNumber);
+          await twilioService.sendMessage(
+            phoneNumber,
+            "בחירת המיקום בוטלה. אפשר לחזור לתפריט ולנסות שוב."
+          );
+          return "";
+        }
+        await twilioService.sendMessage(
+          phoneNumber,
+          "📍 נא לשלוח *מיקום* דרך ווטסאפ (📎 ← *מיקום*) ולא הודעת טקסט."
+        );
+        return "";
+      }
+
+      // Fallback text menu: option 6 = custom location via WhatsApp pin (only while city picker context is active)
+      if (
+        normalizedMessage === "6" &&
+        this.lastCityPickerContext.has(phoneNumber)
+      ) {
+        this.awaitingCustomLocation.add(phoneNumber);
+        await twilioService.sendMessage(
+          phoneNumber,
+          "📍 שלחו עכשיו *מיקום* מווטסאפ (📎 ← מיקום)."
+        );
+        return "";
+      }
+
       // Check for "Show Reminders" text command (check both normalized and original)
       if (originalMessage.includes("הצג תזכורות") ||
         normalizedMessage.includes("הצג תזכורות") ||
@@ -277,8 +313,14 @@ export class MessageHandler {
         normalizedMessage.includes("תפילין") ||
         normalizedMessage.includes("tefillin")) {
         logger.debug(`📋 Text command matched: "תפילין" for ${phoneNumber}`);
-        this.creatingReminderType.set(phoneNumber, "tefillin");
-        await this.sendCityPicker(phoneNumber, "tefillin");
+        const continuedWithSavedLocation = await this.continueReminderFlowWithSavedLocation(
+          phoneNumber,
+          "tefillin"
+        );
+        if (!continuedWithSavedLocation) {
+          this.creatingReminderType.set(phoneNumber, "tefillin");
+          await this.sendCityPicker(phoneNumber, "tefillin");
+        }
         return "";
       } else if (originalMessage.includes("הדלקת נרות") ||
         originalMessage.includes("נרות") ||
@@ -287,8 +329,14 @@ export class MessageHandler {
         normalizedMessage.includes("candle") ||
         normalizedMessage.includes("candle_lighting")) {
         logger.debug(`📋 Text command matched: "הדלקת נרות" for ${phoneNumber}`);
-        this.creatingReminderType.set(phoneNumber, "candle_lighting");
-        await this.sendCityPicker(phoneNumber, "candle_lighting");
+        const continuedWithSavedLocation = await this.continueReminderFlowWithSavedLocation(
+          phoneNumber,
+          "candle_lighting"
+        );
+        if (!continuedWithSavedLocation) {
+          this.creatingReminderType.set(phoneNumber, "candle_lighting");
+          await this.sendCityPicker(phoneNumber, "candle_lighting");
+        }
         return "";
       } else if (originalMessage.includes("שמע") ||
         originalMessage.includes("קריאת שמע") ||
@@ -296,8 +344,14 @@ export class MessageHandler {
         normalizedMessage.includes("קריאת שמע") ||
         normalizedMessage.includes("shema")) {
         logger.debug(`📋 Text command matched: "שמע" for ${phoneNumber}`);
-        this.creatingReminderType.set(phoneNumber, "shema");
-        await this.sendCityPicker(phoneNumber, "shema");
+        const continuedWithSavedLocation = await this.continueReminderFlowWithSavedLocation(
+          phoneNumber,
+          "shema"
+        );
+        if (!continuedWithSavedLocation) {
+          this.creatingReminderType.set(phoneNumber, "shema");
+          await this.sendCityPicker(phoneNumber, "shema");
+        }
         return "";
       }
 
@@ -596,17 +650,35 @@ export class MessageHandler {
         // User selected reminder type from main menu
         // For now, do NOT enforce gender-based restrictions – all users can choose any option
         if (normalizedButton === "tefillin") {
-          // For tefillin, first ask for city, then time picker will be based on that city
-          this.creatingReminderType.set(phoneNumber, "tefillin");
-          await this.sendCityPicker(phoneNumber, "tefillin");
+          // For tefillin, use saved location when available; otherwise ask for city
+          const continuedWithSavedLocation = await this.continueReminderFlowWithSavedLocation(
+            phoneNumber,
+            "tefillin"
+          );
+          if (!continuedWithSavedLocation) {
+            this.creatingReminderType.set(phoneNumber, "tefillin");
+            await this.sendCityPicker(phoneNumber, "tefillin");
+          }
         } else if (isCandleLightingSelection) {
-          // For candle lighting (main menu or woman menu), ask for city first
-          this.creatingReminderType.set(phoneNumber, "candle_lighting");
-          await this.sendCityPicker(phoneNumber, "candle_lighting");
+          // For candle lighting, use saved location when available; otherwise ask for city
+          const continuedWithSavedLocation = await this.continueReminderFlowWithSavedLocation(
+            phoneNumber,
+            "candle_lighting"
+          );
+          if (!continuedWithSavedLocation) {
+            this.creatingReminderType.set(phoneNumber, "candle_lighting");
+            await this.sendCityPicker(phoneNumber, "candle_lighting");
+          }
         } else if (normalizedButton === "shema") {
-          // For shema, also ask for city first
-          this.creatingReminderType.set(phoneNumber, "shema");
-          await this.sendCityPicker(phoneNumber, "shema");
+          // For shema, use saved location when available; otherwise ask for city
+          const continuedWithSavedLocation = await this.continueReminderFlowWithSavedLocation(
+            phoneNumber,
+            "shema"
+          );
+          if (!continuedWithSavedLocation) {
+            this.creatingReminderType.set(phoneNumber, "shema");
+            await this.sendCityPicker(phoneNumber, "shema");
+          }
         }
       } else if (isManageRemindersAction) {
         // Handle buttons from manage reminders quick-reply template
@@ -831,9 +903,15 @@ export class MessageHandler {
           `👩‍🧕 Tahara flow started (hefsek only) for ${phoneNumber}, button="${buttonIdentifier}"`
         );
         this.femaleFlowMode.set(phoneNumber, "taara");
-        // Use city picker template so user explicitly chooses city for sunset
-        this.creatingReminderType.set(phoneNumber, "taara");
-        await this.sendCityPicker(phoneNumber, "taara");
+        // Use saved location if available; otherwise ask user to choose city
+        const continuedWithSavedLocation = await this.continueReminderFlowWithSavedLocation(
+          phoneNumber,
+          "taara"
+        );
+        if (!continuedWithSavedLocation) {
+          this.creatingReminderType.set(phoneNumber, "taara");
+          await this.sendCityPicker(phoneNumber, "taara");
+        }
       } else if (isClean7MenuSelection) {
         // Women's flow: Seven clean days – reminder by date (how many days passed); start_date = today
         logger.info(
@@ -850,8 +928,14 @@ export class MessageHandler {
           `👩‍🧕 Tahara + 7 clean days flow started for ${phoneNumber}, button="${buttonIdentifier}"`
         );
         this.femaleFlowMode.set(phoneNumber, "taara_plus_clean7");
-        this.creatingReminderType.set(phoneNumber, "taara");
-        await this.sendCityPicker(phoneNumber, "taara");
+        const continuedWithSavedLocation = await this.continueReminderFlowWithSavedLocation(
+          phoneNumber,
+          "taara"
+        );
+        if (!continuedWithSavedLocation) {
+          this.creatingReminderType.set(phoneNumber, "taara");
+          await this.sendCityPicker(phoneNumber, "taara");
+        }
       } else if (
         normalizedButton === "start_7_clean" ||
         normalizedButton === "activate_clean7" ||
@@ -880,6 +964,25 @@ export class MessageHandler {
         await twilioService.sendMessage(
           phoneNumber,
           "התזכורת להפסק טהרה הופסקה."
+        );
+      } else if (
+        this.lastCityPickerContext.has(phoneNumber) &&
+        this.isCustomLocationButton(
+          normalizedButton,
+          cleanButton,
+          buttonIdentifier
+        )
+      ) {
+        // Meta: add a list row to cityPicker with payload e.g. custom_location (see isCustomLocationButton)
+        const flowContext: ReminderType | "settings" =
+          this.lastCityPickerContext.get(phoneNumber) ??
+          this.getCreatingReminderType(phoneNumber) ??
+          "settings";
+        this.lastCityPickerContext.set(phoneNumber, flowContext);
+        this.awaitingCustomLocation.add(phoneNumber);
+        await twilioService.sendMessage(
+          phoneNumber,
+          "📍 שלחו *מיקום* מווטסאפ (📎 ← מיקום) — התזכורות יחושבו לפי נקודה זו."
         );
       } else if (isTaaraTimeSelection) {
         // User chose a concrete time (HH:MM) in the tahara time-picker template
@@ -929,40 +1032,13 @@ export class MessageHandler {
           }
         }
       } else if (isCitySelection || this.getCreatingReminderType(phoneNumber)) {
-        // User selected a specific city.
-        // If isCitySelection=false but we have creatingReminderType,
-        // treat ANY unhandled button here as a city identifier from the template.
-        const currentReminderType = this.getCreatingReminderType(phoneNumber);
+        // User selected a specific city (list row), or any unhandled id while a reminder flow expects a city.
+        const flowContext: ReminderType | "settings" =
+          this.lastCityPickerContext.get(phoneNumber) ??
+          this.getCreatingReminderType(phoneNumber) ??
+          "settings";
         const city = buttonIdentifier;
-
-        await mongoService.updateUser(phoneNumber, { location: city });
-        logger.info(
-          `✅ Saved location "${city}" for reminder flow (${currentReminderType || "unknown"}) for ${phoneNumber}`
-        );
-
-        if (currentReminderType === "candle_lighting") {
-          // Candle lighting flow: save city, then show time picker
-          await this.sendCandleLightingTimePicker(phoneNumber);
-        } else if (currentReminderType === "tefillin") {
-          // Tefillin flow: save location, then show tefillin time picker
-          await this.sendTefilinTimePicker(phoneNumber, city);
-        } else if (currentReminderType === "shema") {
-          // Shema flow: save location, then show shema time picker
-          await this.sendShemaTimePicker(phoneNumber);
-        } else if (currentReminderType === "taara") {
-          // Women's flows (hefsek / hefsek+7): save city, then show tahara time picker with correct sunset
-          logger.info(
-            `👩‍🧕 City "${city}" selected for tahara flow for ${phoneNumber} – sending taara time picker`
-          );
-          // Don't change femaleFlowMode here – it already differentiates hefsek vs hefsek+7
-          await this.sendTaaraTimePicker(phoneNumber);
-        } else {
-          logger.info(
-            `⚠️ City "${city}" selected but no active reminder type for ${phoneNumber} - location updated only`
-          );
-          // Only in this fallback case do we clear the creatingReminderType
-          this.creatingReminderType.delete(phoneNumber);
-        }
+        await this.completeLocationSelection(phoneNumber, city, flowContext);
       } else {
         logger.info(
           `⚠️ Button "${buttonIdentifier}" is not recognized - no action taken`
@@ -1159,6 +1235,12 @@ export class MessageHandler {
   // Track which reminder type is being created
   private creatingReminderType = new Map<string, ReminderType>();
 
+  // Last city-picker template: which flow to continue after a city is chosen (or "settings")
+  private lastCityPickerContext = new Map<string, ReminderType | "settings">();
+
+  // User tapped "custom" on city list — next free-text message is saved as location
+  private awaitingCustomLocation = new Set<string>();
+
   // Track current women's-flow mode per user (hefsek only vs hefsek+7)
   private femaleFlowMode = new Map<string, "taara" | "taara_plus_clean7">();
 
@@ -1234,6 +1316,12 @@ export class MessageHandler {
     reminderType?: ReminderType
   ): Promise<void> {
     try {
+      if (reminderType) {
+        this.lastCityPickerContext.set(phoneNumber, reminderType);
+      } else {
+        this.lastCityPickerContext.set(phoneNumber, "settings");
+      }
+
       logger.debug(`Sending city picker to ${phoneNumber} for reminder type: ${reminderType}`);
 
       // Map reminder type to Hebrew text for variable {{1}}
@@ -1266,9 +1354,109 @@ export class MessageHandler {
       // Fallback
       await twilioService.sendMessage(
         phoneNumber,
-        "איזה עיר אתה?\n\n1. ירושלים\n2. באר שבע\n3. תל אביב\n4. אילת\n5. חיפה"
+        "איזה עיר?\n\n1. ירושלים\n2. באר שבע\n3. תל אביב\n4. אילת\n5. חיפה\n\n6. *אחר* — שלחו 6 ואז *מיקום* מווטסאפ (📎 ← מיקום)."
       );
     }
+  }
+
+  /**
+   * WhatsApp list-picker row should use a stable payload such as `custom_location`
+   * so this matches; Hebrew titles are supported heuristically.
+   */
+  private isCustomLocationButton(
+    normalizedButton: string,
+    cleanButton: string,
+    buttonIdentifier: string
+  ): boolean {
+    const id = normalizedButton;
+    const collapsedClean = cleanButton.replace(/[\s_]+/g, "").toLowerCase();
+    const collapsedId = id.replace(/[\s_]+/g, "").toLowerCase();
+    const exact = new Set([
+      "custom_location",
+      "custom_city",
+      "custom",
+      "other",
+      "enter_city",
+      "type_city",
+      "my_city",
+      "free_text_city",
+      "אחר",
+      "עיר_אחרת",
+      "מיקום_אחר",
+    ]);
+    if (
+      exact.has(id) ||
+      exact.has(cleanButton) ||
+      exact.has(collapsedClean) ||
+      exact.has(collapsedId)
+    ) {
+      return true;
+    }
+    if (id.includes("custom_location") || id.includes("custom city")) {
+      return true;
+    }
+    const raw = buttonIdentifier.trim().toLowerCase();
+    if (raw.includes("אחר") && (raw.includes("עיר") || raw.includes("מיקום"))) {
+      return true;
+    }
+    if (raw.includes("custom") && raw.includes("city")) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Saves location and continues the reminder flow, or only confirms for settings.
+   * Returns false if the city string is invalid (caller may keep awaiting custom input).
+   */
+  private async completeLocationSelection(
+    phoneNumber: string,
+    city: string,
+    flowContext: ReminderType | "settings"
+  ): Promise<boolean> {
+    const trimmed = city.trim();
+    if (!trimmed || trimmed.length < 2 || trimmed.length > 80) {
+      await twilioService.sendMessage(
+        phoneNumber,
+        "נא לשלוח שם מקום תקין (בין 2 ל־80 תווים)."
+      );
+      return false;
+    }
+
+    await mongoService.updateUser(phoneNumber, { location: trimmed });
+    this.lastCityPickerContext.delete(phoneNumber);
+
+    if (flowContext === "settings") {
+      this.creatingReminderType.delete(phoneNumber);
+      await twilioService.sendMessage(
+        phoneNumber,
+        `✅ המיקום עודכן ל: ${trimmed}`
+      );
+      return true;
+    }
+
+    logger.info(
+      `✅ Saved location "${trimmed}" for reminder flow (${flowContext}) for ${phoneNumber}`
+    );
+
+    if (flowContext === "candle_lighting") {
+      await this.sendCandleLightingTimePicker(phoneNumber);
+    } else if (flowContext === "tefillin") {
+      await this.sendTefilinTimePicker(phoneNumber, trimmed);
+    } else if (flowContext === "shema") {
+      await this.sendShemaTimePicker(phoneNumber);
+    } else if (flowContext === "taara") {
+      logger.info(
+        `👩‍🧕 City "${trimmed}" selected for tahara flow for ${phoneNumber} – sending taara time picker`
+      );
+      await this.sendTaaraTimePicker(phoneNumber);
+    } else {
+      logger.info(
+        `⚠️ Location "${trimmed}" saved but no handler for reminder type "${flowContext}" for ${phoneNumber}`
+      );
+      this.creatingReminderType.delete(phoneNumber);
+    }
+    return true;
   }
 
   /**
@@ -2013,6 +2201,80 @@ export class MessageHandler {
       // Fallback: use sunset time picker
       await this.sendTimePickerForSunset(phoneNumber, location || "Jerusalem");
     }
+  }
+
+  /**
+   * WhatsApp shared location (Latitude/Longitude on webhook). Only during custom-location flow.
+   * Stores `geo:lat,lng` in user.location; zmanim use coordinates via hebcalService.
+   */
+  async handleIncomingLocation(
+    phoneNumber: string,
+    latitude: number,
+    longitude: number
+  ): Promise<boolean> {
+    if (!this.awaitingCustomLocation.has(phoneNumber)) {
+      return false;
+    }
+
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      Math.abs(latitude) > 90 ||
+      Math.abs(longitude) > 180
+    ) {
+      await twilioService.sendMessage(
+        phoneNumber,
+        "לא הצלחתי לקרוא את המיקום. נסו לשלוח שוב דרך 📎 ← מיקום."
+      );
+      return true;
+    }
+
+    const flowContext: ReminderType | "settings" =
+      this.lastCityPickerContext.get(phoneNumber) ??
+      this.getCreatingReminderType(phoneNumber) ??
+      "settings";
+    const geoStr = `geo:${latitude.toFixed(6)},${longitude.toFixed(6)}`;
+    const ok = await this.completeLocationSelection(
+      phoneNumber,
+      geoStr,
+      flowContext
+    );
+    if (ok) {
+      this.awaitingCustomLocation.delete(phoneNumber);
+    }
+    return true;
+  }
+
+  private async continueReminderFlowWithSavedLocation(
+    phoneNumber: string,
+    reminderType: ReminderType
+  ): Promise<boolean> {
+    const user = await mongoService.getUserByPhone(phoneNumber);
+    const savedLocation = user?.location?.trim();
+
+    if (!savedLocation) {
+      return false;
+    }
+
+    this.lastCityPickerContext.delete(phoneNumber);
+    this.awaitingCustomLocation.delete(phoneNumber);
+
+    this.creatingReminderType.set(phoneNumber, reminderType);
+    logger.info(
+      `📍 Using saved location "${savedLocation}" for ${phoneNumber}, skipping city picker for ${reminderType}`
+    );
+
+    if (reminderType === "tefillin") {
+      await this.sendTefilinTimePicker(phoneNumber, savedLocation);
+    } else if (reminderType === "shema") {
+      await this.sendShemaTimePicker(phoneNumber);
+    } else if (reminderType === "candle_lighting") {
+      await this.sendCandleLightingTimePicker(phoneNumber);
+    } else if (reminderType === "taara") {
+      await this.sendTaaraTimePicker(phoneNumber);
+    }
+
+    return true;
   }
 }
 

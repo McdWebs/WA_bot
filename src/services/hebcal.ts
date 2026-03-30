@@ -12,6 +12,62 @@ export class HebcalService {
   private cache: Map<string, { data: any; timestamp: number }> = new Map();
   private readonly CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
+  /**
+   * Stored user.location from WhatsApp shared pin: "geo:lat,lng" (6 dp).
+   */
+  private parseStoredGeoLocation(
+    location: string
+  ): { lat: number; lng: number } | null {
+    const m = String(location)
+      .trim()
+      .match(/^geo:(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/i);
+    if (!m) return null;
+    const lat = parseFloat(m[1]);
+    const lng = parseFloat(m[2]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+    return { lat, lng };
+  }
+
+  private async resolveCoordinatesForZmanim(
+    location: string,
+    date?: string
+  ): Promise<{ latitude: number; longitude: number }> {
+    const geo = this.parseStoredGeoLocation(location);
+    if (geo) {
+      logger.info(
+        `Using stored GPS coordinates for zmanim: lat=${geo.lat}, lon=${geo.lng}`
+      );
+      return { latitude: geo.lat, longitude: geo.lng };
+    }
+
+    const normalizedLocation = (location || "Jerusalem").trim();
+    const coordMap: Record<string, { latitude: number; longitude: number }> =
+      {
+        Jerusalem: { latitude: 31.7683, longitude: 35.2137 },
+        "Tel Aviv": { latitude: 32.0853, longitude: 34.7818 },
+        "Beer Sheva": { latitude: 31.252973, longitude: 34.791462 },
+        Eilat: { latitude: 29.557669, longitude: 34.951925 },
+        Haifa: { latitude: 32.794046, longitude: 34.989571 },
+      };
+
+    if (coordMap[normalizedLocation]) {
+      const c = coordMap[normalizedLocation];
+      logger.info(
+        `Using hardcoded coordinates for ${normalizedLocation}: lat=${c.latitude}, lon=${c.longitude}`
+      );
+      return c;
+    }
+
+    const data = await this.getHebcalData(location, date);
+    const latitude = data.location?.latitude || 31.7683;
+    const longitude = data.location?.longitude || 35.2137;
+    logger.info(
+      `Using Hebcal calendar API coordinates for ${location}: lat=${latitude}, lon=${longitude}`
+    );
+    return { latitude, longitude };
+  }
+
   private getCacheKey(location: string, date: string): string {
     return `${location}_${date}`;
   }
@@ -39,16 +95,24 @@ export class HebcalService {
     }
 
     try {
+      const geo = this.parseStoredGeoLocation(location);
       const params: any = {
         v: 1,
         cfg: "json",
-        geo: "city",
-        city: location,
         maj: "on", // Major holidays
         min: "on", // Minor holidays
         nx: "on", // Rosh Chodesh
         mod: "on", // Modern holidays
       };
+
+      if (geo) {
+        params.geo = "pos";
+        params.latitude = String(geo.lat);
+        params.longitude = String(geo.lng);
+      } else {
+        params.geo = "city";
+        params.city = location;
+      }
 
       if (date) {
         params.start = date;
@@ -120,35 +184,10 @@ export class HebcalService {
       // fallback issues (e.g. Tel Aviv sometimes resolving to Jerusalem).
       const normalizedLocation = (location || "Jerusalem").trim();
 
-      // Known coordinates for a small set of supported cities
-      const coordMap: Record<
-        string,
-        { latitude: number; longitude: number }
-      > = {
-        Jerusalem: { latitude: 31.7683, longitude: 35.2137 },
-        "Tel Aviv": { latitude: 32.0853, longitude: 34.7818 },
-        "Beer Sheva": { latitude: 31.252973, longitude: 34.791462 },
-        Eilat: { latitude: 29.557669, longitude: 34.951925 },
-        Haifa: { latitude: 32.794046, longitude: 34.989571 },
-      };
-
-      let latitude: number;
-      let longitude: number;
-
-      if (coordMap[normalizedLocation]) {
-        ({ latitude, longitude } = coordMap[normalizedLocation]);
-        logger.info(
-          `Using hardcoded coordinates for ${normalizedLocation}: lat=${latitude}, lon=${longitude}`
-        );
-      } else {
-        // Fallback: get location coordinates from Hebcal calendar API
-        const data = await this.getHebcalData(location, date);
-        latitude = data.location?.latitude || 31.7683; // Default to Jerusalem
-        longitude = data.location?.longitude || 35.2137; // Default to Jerusalem
-        logger.info(
-          `Using Hebcal coordinates for ${location}: lat=${latitude}, lon=${longitude}`
-        );
-      }
+      const { latitude, longitude } = await this.resolveCoordinatesForZmanim(
+        normalizedLocation,
+        date
+      );
 
       const today = date ? new Date(date) : new Date();
       const todayStr = today.toISOString().split("T")[0];
@@ -417,9 +456,10 @@ export class HebcalService {
     date?: string
   ): Promise<string | null> {
     try {
-      const data = await this.getHebcalData(location, date);
-      const latitude = data.location?.latitude || 31.7683;
-      const longitude = data.location?.longitude || 35.2137;
+      const { latitude, longitude } = await this.resolveCoordinatesForZmanim(
+        location,
+        date
+      );
 
       const zmanimData = await this.getZmanimData(latitude, longitude, date);
 
@@ -461,9 +501,10 @@ export class HebcalService {
     date?: string
   ): Promise<string | null> {
     try {
-      const data = await this.getHebcalData(location, date);
-      const latitude = data.location?.latitude || 31.7683;
-      const longitude = data.location?.longitude || 35.2137;
+      const { latitude, longitude } = await this.resolveCoordinatesForZmanim(
+        location,
+        date
+      );
 
       const zmanimData = await this.getZmanimData(latitude, longitude, date);
 
