@@ -7,6 +7,7 @@ import reminderService from "../../services/reminderService";
 import reminderStateManager, { ReminderStateMode } from "../../services/reminderStateManager";
 import settingsStateManager from "../../services/settingsStateManager";
 import timezoneService from "../../utils/timezone";
+import { buildClean7ReminderText } from "../../utils/clean7ReminderText";
 import {
   completeLocationSelection,
   continueReminderFlowWithSavedLocation,
@@ -465,14 +466,14 @@ export async function interactiveButtonFlow(
         await sendCityPicker(state, phoneNumber, "taara");
       }
     } else if (isClean7MenuSelection) {
-      // Women's flow: Seven clean days – reminder by date (how many days passed); start_date = today
+      // Women's flow: Seven clean days – start_date = first day of the count (today)
       logger.info(
         `👩‍🧕 7 clean days flow selected for ${phoneNumber}, button="${buttonIdentifier}"`
       );
       const todayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
       await saveClean7Reminder(phoneNumber, todayStr);
       await twilioService.sendTemplateMessage(phoneNumber, "clean7FinalMessage", {
-        "1": "1",
+        "1": buildClean7ReminderText(1),
       });
     } else if (isTaaraPlusClean7MenuSelection) {
       // Women's flow: Hefsek + 7 clean days – FIRST ask for city, then hefsek time picker, then CLEAN_7_START_TAARA_TIME
@@ -502,7 +503,7 @@ export async function interactiveButtonFlow(
       const todayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
       await saveClean7Reminder(phoneNumber, todayStr);
       await twilioService.sendTemplateMessage(phoneNumber, "clean7FinalMessage", {
-        "1": "1",
+        "1": buildClean7ReminderText(1),
       });
     } else if (
       normalizedButton === "stop_the_remainder" ||

@@ -27,7 +27,7 @@ export interface ReminderSetting {
   time_offset_minutes: number; // negative = before, positive = after
   test_time?: string; // TEST MODE ONLY: Manual test time in "HH:MM" format (e.g., "13:50")
   last_sent_at?: string; // ISO timestamp of when this reminder was last sent (prevents duplicates)
-  /** For clean_7: start date (YYYY-MM-DD) in Israel timezone; used to compute "day N of 7" */
+  /** For clean_7: first day of the count (YYYY-MM-DD, Israel TZ); that calendar day is day 1 of 7 */
   clean_7_start_date?: string;
   created_at?: string;
   updated_at?: string;

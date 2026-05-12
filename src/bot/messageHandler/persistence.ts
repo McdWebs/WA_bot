@@ -309,7 +309,7 @@ export async function disableTaaraReminder(phoneNumber: string): Promise<void> {
 
 /**
  * Women's flow: save 7 clean-days reminder.
- * Sends daily at 09:00; template receives day number (1–7) and today's date (by clean_7_start_date).
+ * Sends daily at 09:00; clean_7_start_date is day 1. Template {{1}} should be the full Hebrew body from buildClean7ReminderText.
  * @param startDate YYYY-MM-DD in Israel timezone (default: today)
  */
 export async function saveClean7Reminder(

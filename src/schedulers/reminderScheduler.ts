@@ -7,6 +7,12 @@ import messageTemplateService from "../utils/messageTemplates";
 import logger from "../utils/logger";
 import { ReminderSetting, User } from "../types";
 import { config } from "../config";
+import {
+  buildClean7ReminderText,
+  clean7CurrentDayNumber,
+  clean7DaysSinceStart,
+  isWithinClean7Window,
+} from "../utils/clean7ReminderText";
 
 const ISRAEL_TZ = "Asia/Jerusalem";
 
@@ -322,7 +328,7 @@ export class ReminderScheduler {
           return timezoneService.isTimeToSendReminder(timeStr, user.timezone || ISRAEL_TZ);
         }
         case "clean_7": {
-          // 7 clean days: send daily at 09:00; template gets day number (1–7) and today's date
+          // 7 clean days: send daily at 09:00; start_date is day 1 of the count
           const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
           const lastSentDate = setting.last_sent_at
             ? setting.last_sent_at.split("T")[0]
@@ -330,13 +336,7 @@ export class ReminderScheduler {
           if (lastSentDate === israelTodayStr) return false;
           const startDate = (setting as any).clean_7_start_date as string | undefined;
           if (!startDate) return false;
-          const start = new Date(startDate + "T12:00:00Z").getTime();
-          const today = new Date(israelTodayStr + "T12:00:00Z").getTime();
-          const daysDiff = Math.floor((today - start) / (24 * 60 * 60 * 1000));
-          // Start counting from the *day after* the user chose the reminder
-          // (i.e., first reminder = dayNumber 1 when daysDiff === 1)
-          const dayNumber = daysDiff;
-          if (dayNumber < 1 || dayNumber > 7) return false;
+          if (!isWithinClean7Window(startDate, israelTodayStr)) return false;
           return timezoneService.isTimeToSendReminder("09:00", user.timezone || ISRAEL_TZ);
         }
         default:
@@ -549,12 +549,7 @@ export class ReminderScheduler {
           if (lastSentDate === israelTodayStr) return false;
           const startDate = (setting as any).clean_7_start_date as string | undefined;
           if (!startDate) return false;
-          const start = new Date(startDate + "T12:00:00Z").getTime();
-          const today = new Date(israelTodayStr + "T12:00:00Z").getTime();
-          const daysDiff = Math.floor((today - start) / (24 * 60 * 60 * 1000));
-          // Start counting from the *day after* the user chose the reminder
-          const dayNumber = daysDiff;
-          if (dayNumber < 1 || dayNumber > 7) return false;
+          if (!isWithinClean7Window(startDate, israelTodayStr)) return false;
           const targetMin = 9 * 60 + 0;
           const diff = Math.abs(currentTimeMinutes - targetMin);
           return diff <= config.testMode.triggerWindowMinutes;
@@ -771,28 +766,23 @@ export class ReminderScheduler {
             return;
           }
 
-          const start = new Date(startDate + "T12:00:00Z").getTime();
-          const today = new Date(todayStr + "T12:00:00Z").getTime();
-          const daysDiff = Math.floor((today - start) / (24 * 60 * 60 * 1000));
-
-          // Keep day numbering consistent with shouldSendReminder:
-          // first reminder day (clean day 1) is when daysDiff === 1, last is when daysDiff === 7.
-          const dayNumberInt = daysDiff;
-          if (dayNumberInt < 1 || dayNumberInt > 7) {
+          if (!isWithinClean7Window(startDate, todayStr)) {
+            const dayN = clean7CurrentDayNumber(startDate, todayStr);
             logger.info(
-              `clean_7 reminder ${setting.id} for ${user.phone_number} is out of range (day=${dayNumberInt}), skipping send`
+              `clean_7 reminder ${setting.id} for ${user.phone_number} is out of range (day=${dayN}), skipping send`
             );
             return;
           }
 
-          const dayNumber = String(dayNumberInt);
+          const dayToday = clean7CurrentDayNumber(startDate, todayStr);
+          const body = buildClean7ReminderText(dayToday);
           logger.info(
-            `Sending clean_7 reminder to ${user.phone_number} (day ${dayNumber}, date=${todayStr})`
+            `Sending clean_7 reminder to ${user.phone_number} (day ${dayToday}, date=${todayStr})`
           );
           await twilioService.sendTemplateMessage(
             user.phone_number,
             "clean7FinalMessage",
-            { "1": dayNumber }
+            { "1": body }
           );
           break;
         }
@@ -828,13 +818,11 @@ export class ReminderScheduler {
             const startDate = (setting as any).clean_7_start_date as string | undefined;
             const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
             if (startDate) {
-              const start = new Date(startDate + "T12:00:00Z").getTime();
-              const today = new Date(israelTodayStr + "T12:00:00Z").getTime();
-              const daysDiff = Math.floor((today - start) / (24 * 60 * 60 * 1000));
-              if (daysDiff >= 7) {
+              const idx = clean7DaysSinceStart(startDate, israelTodayStr);
+              if (idx >= 6) {
                 (updatePayload as any).enabled = false;
                 logger.info(
-                  `Disabled clean_7 reminder ${setting.id} for ${user.phone_number} after completing 7 days (daysDiff=${daysDiff})`
+                  `Disabled clean_7 reminder ${setting.id} for ${user.phone_number} after completing 7 days (dayIndex=${idx})`
                 );
               }
             }

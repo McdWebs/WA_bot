@@ -35,6 +35,7 @@ export const config = {
     // Women's flows – tahara / 7 clean days
     taaraTimePicker: process.env.TAARA_TIME_CHOSE_REMAINDER_TIME || "",
     taaraFinalMessage: process.env.TAARA_TIME_FINAL_MESSAGE || "",
+    // Body should expose a single variable {{1}} = full sentence from buildClean7ReminderText()
     clean7FinalMessage: process.env.CLEAN_7_FINAL_MESSAGE || "",
     clean7StartTaaraTime: process.env.CLEAN_7_START_TAARA_TIME || "",
     // Final reminder messages (used to avoid WhatsApp 24-hour freeform limits)
