@@ -38,6 +38,7 @@ export const config = {
     // Body should expose a single variable {{1}} = full sentence from buildClean7ReminderText()
     clean7FinalMessage: process.env.CLEAN_7_FINAL_MESSAGE || "",
     clean7StartTaaraTime: process.env.CLEAN_7_START_TAARA_TIME || "",
+    broadcast: process.env.WHATSAPP_TEMPLATE_BROADCAST || "HX0aa2146c032fd86b9d6a50c64095096a",
     // Final reminder messages (used to avoid WhatsApp 24-hour freeform limits)
     shemaFinalMessage: process.env.WHATSAPP_TEMPLATE_SHEMA_final_message || "",
     tefilinFinalMessage: process.env.WHATSAPP_TEMPLATE_TEFILIN_final_message || "",

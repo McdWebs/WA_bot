@@ -9,6 +9,7 @@ import Reminders from "./pages/Reminders";
 import ReminderDetail from "./pages/ReminderDetail";
 import Messages from "./pages/Messages";
 import Usage from "./pages/Usage";
+import Broadcast from "./pages/Broadcast";
 import "./App.css";
 
 const queryClient = new QueryClient({
@@ -45,6 +46,7 @@ function AppRoutes() {
         <Route path="reminders/:id" element={<ReminderDetail />} />
         <Route path="messages" element={<Messages />} />
         <Route path="usage" element={<Usage />} />
+        <Route path="broadcast" element={<Broadcast />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

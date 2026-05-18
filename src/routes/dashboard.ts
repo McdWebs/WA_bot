@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { config } from "../config";
 import mongoService from "../services/mongo";
+import twilioService from "../services/twilio";
 import { getTwilioUsage } from "../services/twilioUsage";
 import {
   getMessageStats,
@@ -217,6 +218,28 @@ router.get("/messages", async (req: Request, res: Response) => {
     res.json(stats);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch messages" });
+  }
+});
+
+/** POST /api/dashboard/broadcast - Send contribution template to all users */
+router.post("/broadcast", async (_req: Request, res: Response) => {
+  try {
+    const users = await mongoService.getAllUsers({ limit: 2000, skip: 0 });
+    let sent = 0;
+    let failed = 0;
+
+    for (const user of users) {
+      try {
+        await twilioService.sendTemplateMessage(user.phone_number, "broadcast");
+        sent++;
+      } catch {
+        failed++;
+      }
+    }
+
+    res.json({ sent, failed, total: users.length });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to send broadcast" });
   }
 });
 

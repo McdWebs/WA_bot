@@ -23,6 +23,7 @@ export default function Layout() {
           <li><NavLink to="/reminders">Reminders</NavLink></li>
           <li><NavLink to="/messages">Messages</NavLink></li>
           <li><NavLink to="/usage">Cost</NavLink></li>
+          <li><NavLink to="/broadcast">Broadcast</NavLink></li>
         </ul>
         <button type="button" className="nav-logout" onClick={handleLogout}>
           Log out

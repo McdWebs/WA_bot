@@ -56,7 +56,8 @@ export class TwilioService {
       | "taaraTimePicker"
       | "taaraFinalMessage"
       | "clean7FinalMessage"
-      | "clean7StartTaaraTime",
+      | "clean7StartTaaraTime"
+      | "broadcast",
     parameters?: Record<string, string>
   ): Promise<void> {
     const templateSid = config.templates[templateKey];
