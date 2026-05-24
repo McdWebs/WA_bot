@@ -6,6 +6,7 @@ function getApiBase(): string {
     if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
       return LOCAL_BACKEND;
     }
+    
   }
   if (import.meta.env.DEV) return "/api/dashboard";
   return import.meta.env.VITE_API_BASE_URL
