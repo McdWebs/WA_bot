@@ -3,8 +3,10 @@ import { api } from "../api";
 import "./Broadcast.css";
 
 interface BroadcastResult {
-  sent: number;
-  failed: number;
+  status?: string;
+  message?: string;
+  sent?: number;
+  failed?: number;
   total: number;
 }
 
@@ -46,9 +48,15 @@ export default function Broadcast() {
 
       {result && (
         <div className="broadcast-result success">
-          <span>נשלח: {result.sent}</span>
-          <span>נכשל: {result.failed}</span>
-          <span>סה"כ: {result.total}</span>
+          {result.status === "started" ? (
+            <span>✅ שליחה התחילה ברקע — {result.total} משתמשים. ההודעות נשלחות בהדרגה (כ-1 שנייה בין כל הודעה).</span>
+          ) : (
+            <>
+              <span>נשלח: {result.sent}</span>
+              <span>נכשל: {result.failed}</span>
+              <span>סה"כ: {result.total}</span>
+            </>
+          )}
         </div>
       )}
 

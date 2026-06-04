@@ -8,6 +8,7 @@ import {
   getMessageCountByPhone,
 } from "../services/messageLog";
 import { getTwilioUsageForRange } from "../services/twilioUsage";
+import logger from "../utils/logger";
 
 const router = Router();
 
@@ -225,6 +226,12 @@ router.get("/messages", async (req: Request, res: Response) => {
 router.post("/broadcast", async (_req: Request, res: Response) => {
   try {
     const users = await mongoService.getAllUsers({ limit: 2000, skip: 0 });
+
+    // Respond immediately so the HTTP request doesn't time out on large lists
+    res.json({ status: "started", total: users.length, message: "Broadcast started in background" });
+
+    // Process in background with rate-limiting delay (1s between messages)
+    const DELAY_MS = 1000;
     let sent = 0;
     let failed = 0;
 
@@ -235,11 +242,16 @@ router.post("/broadcast", async (_req: Request, res: Response) => {
       } catch {
         failed++;
       }
+      // Wait between messages to avoid Twilio/WhatsApp rate limit (error 63018)
+      await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     }
 
-    res.json({ sent, failed, total: users.length });
+    logger.info(`📢 Broadcast complete: sent=${sent}, failed=${failed}, total=${users.length}`);
   } catch (error) {
-    res.status(500).json({ error: "Failed to send broadcast" });
+    // Only reachable if the initial DB query fails (before res.json above)
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to send broadcast" });
+    }
   }
 });
 
