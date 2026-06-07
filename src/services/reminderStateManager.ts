@@ -31,7 +31,7 @@ class ReminderStateManager {
    */
   setState(phoneNumber: string, state: ReminderState): void {
     this.state.set(phoneNumber, state);
-    logger.info(`State set for ${phoneNumber}: ${state.mode}`, {
+    logger.debug(`State set for ${phoneNumber}: ${state.mode}`, {
       reminderId: state.reminderId,
     });
   }
@@ -48,7 +48,7 @@ class ReminderStateManager {
    */
   clearState(phoneNumber: string): void {
     this.state.delete(phoneNumber);
-    logger.info(`State cleared for ${phoneNumber}`);
+    logger.debug(`State cleared for ${phoneNumber}`);
   }
 
   /**

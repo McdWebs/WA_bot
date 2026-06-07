@@ -5,7 +5,7 @@ import { config } from "./config";
 import messageHandler from "./bot/messageHandler";
 import reminderScheduler from "./schedulers/reminderScheduler";
 import twilioService from "./services/twilio";
-import logger from "./utils/logger";
+import logger, { shortPhone } from "./utils/logger";
 import reminderStateManager, { ReminderStateMode } from "./services/reminderStateManager";
 import settingsStateManager, { SettingsStateMode } from "./services/settingsStateManager";
 import mongoService, { connectMongo, closeMongo } from "./services/mongo";
@@ -20,8 +20,10 @@ const app = express();
 const LOCAL_DEV_ORIGINS = [
   "http://localhost:4173",
   "http://localhost:5173",
+  "http://localhost:5175",
   "http://127.0.0.1:4173",
   "http://127.0.0.1:5173",
+  "http://127.0.0.1:5175",
 ];
 const allowedOrigins = new Set([
   ...LOCAL_DEV_ORIGINS,
@@ -125,55 +127,50 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
     const Longitude = reqBody?.Longitude ?? reqBody?.longitude;
 
     if (!From) {
-      logger.error("❌ CRITICAL: From field is missing from webhook!");
-      logger.debug("Webhook body:", JSON.stringify(reqBody, null, 2));
+      logger.error("Webhook missing From field", { body: reqBody });
       return;
     }
 
     // Extract phone number (remove 'whatsapp:' prefix if present)
     const phoneNumber = From.replace("whatsapp:", "").trim();
     const messageBody = Body.trim();
+    const tag = shortPhone(phoneNumber);
 
     // Parse WhatsApp Interactive message correctly
     // Twilio sends MessageType as "interactive" OR "button" for button clicks
     let buttonIdentifier: string | null = null;
     const isInteractive = MessageType === "interactive" || MessageType === "button";
 
-    // Log raw webhook data for debugging
-    logger.info(
-      `📥 Webhook data for ${phoneNumber}: MessageType="${MessageType}", Body="${Body.substring(0, 50)}", ButtonPayload="${ButtonPayload}", ButtonText="${ButtonText}", ListId="${ListId}", Latitude="${Latitude ?? ""}", Longitude="${Longitude ?? ""}"`
-    );
-
     if (isInteractive) {
-      // Interactive/Button message - use ButtonPayload (preferred) or ButtonText
       buttonIdentifier = ButtonPayload || ButtonText || null;
-
-      // List Picker uses ListId
       if (!buttonIdentifier && ListId) {
         buttonIdentifier = ListId;
       }
-
-      logger.info(`🔘 Interactive/Button message detected: buttonIdentifier="${buttonIdentifier}" for ${phoneNumber}`);
-    } else {
-      logger.info(`📝 Text message detected: "${Body.substring(0, 50)}" for ${phoneNumber}`);
     }
 
-    // Check if user is in reminder selection mode (treat numeric input as text)
     const userState = reminderStateManager.getState(phoneNumber);
     const isInReminderSelectionMode = userState?.mode === ReminderStateMode.CHOOSE_REMINDER;
     const shouldTreatAsText = isInReminderSelectionMode && /^\d+$/.test(messageBody);
     const isButtonClick = isInteractive && !!buttonIdentifier;
 
-    logger.info(`🔍 Message classification for ${phoneNumber}: isInteractive=${isInteractive}, buttonIdentifier="${buttonIdentifier}", isButtonClick=${isButtonClick}, shouldTreatAsText=${shouldTreatAsText}`);
+    logger.debug(`[${tag}] inbound`, {
+      type: MessageType,
+      body: Body.substring(0, 80),
+      button: buttonIdentifier,
+      listId: ListId,
+      lat: Latitude,
+      lon: Longitude,
+    });
 
-    const templateSendStartTime = Date.now();
-
-    // Process button clicks normally (no fast path - all buttons go through messageHandler)
     if (isButtonClick && !shouldTreatAsText && buttonIdentifier) {
-      logger.info(`🔘 Processing button click: "${buttonIdentifier}" from ${phoneNumber}`);
       await messageHandler.handleInteractiveButton(phoneNumber, buttonIdentifier);
-    } else {
-      // Regular text message - send welcome template for every conversation start
+      logger.info(
+        `[${tag}] btn:${buttonIdentifier.slice(0, 40)} (${Date.now() - processStartTime}ms)`
+      );
+      return;
+    }
+
+    // Regular text message - send welcome template for every conversation start
       // Use cache to check user quickly without DB query
       const user = await mongoService.getUserByPhone(phoneNumber);
 
@@ -188,17 +185,11 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
 
         // Send welcome template IMMEDIATELY, wait for it to complete, then send gender question
         await twilioService.sendTemplateMessage(phoneNumber, "welcome");
-        logger.info(`✅ Welcome template sent, waiting before sending gender question for ${phoneNumber}`);
-
-        // Wait longer to ensure welcome template is fully processed and delivered before sending menu
-        // WhatsApp may process messages out of order if sent too quickly
-        // Increased delay to 3 seconds to ensure proper sequencing
         await new Promise(resolve => setTimeout(resolve, 3000));
-
-        // Ask for gender once; actual menu will be sent after user clicks
         await twilioService.sendTemplateMessage(phoneNumber, "genderQuestion");
-        const templateSendTime = Date.now() - templateSendStartTime;
-        logger.info(`⚡ Welcome + Gender Question templates sent in ${templateSendTime}ms for new user ${phoneNumber} (fast path)`);
+        logger.info(
+          `[${tag}] new user → welcome+gender (${Date.now() - processStartTime}ms)`
+        );
         return;
       }
 
@@ -234,7 +225,7 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
         );
         if (locationHandled) {
           logger.info(
-            `📍 WhatsApp location handled for ${phoneNumber} (lat=${latParsed}, lon=${lngParsed})`
+            `[${tag}] location ${latParsed.toFixed(4)},${lngParsed.toFixed(4)} (${Date.now() - processStartTime}ms)`
           );
           return;
         }
@@ -242,6 +233,7 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
           phoneNumber,
           "לעדכון מיקום: בחרו ״אחר״ ברשימת הערים בתפריט, ואז שלחו מיקום (📎 ← מיקום)."
         );
+        logger.info(`[${tag}] location rejected (no flow)`);
         return;
       }
 
@@ -256,57 +248,41 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
       // If handler returned a non-empty string, send it as a plain text reply.
       if (handlerResponse && handlerResponse.trim() !== "") {
         await twilioService.sendMessage(phoneNumber, handlerResponse);
-        const totalProcessTime = Date.now() - processStartTime;
         logger.info(
-          `✅ Text message processed for existing user ${phoneNumber} in ${totalProcessTime}ms with direct handler response`
+          `[${tag}] txt reply "${messageBody.slice(0, 30)}" (${Date.now() - processStartTime}ms)`
         );
         return;
       }
 
-      // If user is (or was just) in settings/reminder flow, do NOT auto-send welcome/menu/settings.
       if (previousSettingsState || currentSettingsState || previousReminderState || currentReminderState) {
         logger.info(
-          `⚙️ User ${phoneNumber} is in or just used a flow (settings/reminders) – skipping auto welcome/menu/settings`
-        );
-        const totalProcessTime = Date.now() - processStartTime;
-        logger.info(
-          `✅ Text message processed for existing user ${phoneNumber} in ${totalProcessTime}ms (no auto templates due to active flow)`
+          `[${tag}] txt flow "${messageBody.slice(0, 30)}" (${Date.now() - processStartTime}ms)`
         );
         return;
       }
 
-      // At this point: existing user, no active flow, no specific command matched → treat as conversation start.
       const trimmedBody = messageBody.trim();
       const isCommandLike =
         /נרות|תפילין|שמע|תזכורת|הצג|הדלקת|חדשה|חזרה|הגדרות|candle/i.test(trimmedBody) ||
         (trimmedBody.includes("תזכורות") || trimmedBody.includes("הצג"));
       if (isCommandLike) {
-        const totalProcessTime = Date.now() - processStartTime;
         logger.info(
-          `✅ Command-like text processed for ${phoneNumber} in ${totalProcessTime}ms (no welcome/menu auto flow)`
+          `[${tag}] txt cmd "${trimmedBody.slice(0, 30)}" (${Date.now() - processStartTime}ms)`
         );
         return;
       }
 
-      // Conversation start for existing user: send welcome once, then either gender question or menu+settings.
       await twilioService.sendTemplateMessage(phoneNumber, "welcome");
-      logger.info(`✅ Welcome template sent, waiting before next step for existing user ${phoneNumber}`);
-
-      // Wait to ensure welcome template is delivered before sending next templates (WhatsApp ordering issues).
       await new Promise((resolve) => setTimeout(resolve, 3000));
 
       if (!user.gender) {
-        // Ask for gender only once per user
         await twilioService.sendTemplateMessage(phoneNumber, "genderQuestion");
-        const templateSendTime = Date.now() - templateSendStartTime;
         logger.info(
-          `⚡ Welcome + Gender Question templates sent in ${templateSendTime}ms for existing user ${phoneNumber} (missing gender)`
+          `[${tag}] restart → welcome+gender (${Date.now() - processStartTime}ms)`
         );
       } else {
         const userGender: Gender = user.gender as Gender;
         await messageHandler.sendMainMenu(phoneNumber, userGender);
-
-        // Immediately follow the menu with the free-form settings menu
         settingsStateManager.setState(phoneNumber, {
           mode: SettingsStateMode.MAIN_MENU,
         });
@@ -314,25 +290,13 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
           phoneNumber,
           "⚙️ *הגדרות משתמש*\n\nבחר/י מספר פעולה:\n1️⃣ שינוי מגדר\n2️⃣ עריכת / מחיקת תזכורות\n3️⃣ שינוי מיקום\n\nאו שלח/י *ביטול* לחזרה למסך הראשי."
         );
-
-        const templateSendTime = Date.now() - templateSendStartTime;
         logger.info(
-          `⚡ Welcome + Menu + Settings text sent in ${templateSendTime}ms for existing user ${phoneNumber} (conversation start with gender ${userGender})`
+          `[${tag}] restart → welcome+menu (${userGender}, ${Date.now() - processStartTime}ms)`
         );
       }
-
-      const totalProcessTime = Date.now() - processStartTime;
-      logger.info(
-        `✅ Welcome + Menu (+ Settings when applicable) sent in ${totalProcessTime}ms for existing user ${phoneNumber}`
-      );
       return;
-    }
-
-    const totalProcessTime = Date.now() - processStartTime;
-    const templateSendTime = Date.now() - templateSendStartTime;
-    logger.info(`✅ Message processed in ${totalProcessTime}ms (template send: ${templateSendTime}ms) for ${phoneNumber}`);
   } catch (error) {
-    logger.error(`❌ Error processing WhatsApp message:`, error);
+    logger.error("WhatsApp message processing failed:", error);
 
     // Try to send error message to user if we have phone number
     try {
@@ -345,7 +309,7 @@ async function processWhatsAppMessage(reqBody: any): Promise<void> {
         );
       }
     } catch (fallbackError) {
-      logger.error(`❌ Failed to send error fallback:`, fallbackError);
+      logger.error("Error fallback message failed:", fallbackError);
     }
   }
 }
@@ -362,13 +326,11 @@ app.post("/webhook/whatsapp", (req, res) => {
   const webhookResponseTime = Date.now();
   const responseLatency = webhookResponseTime - webhookReceiveTime;
 
-  logger.info(`⚡ Webhook ACK sent in ${responseLatency}ms`);
+  logger.debug(`Webhook ACK ${responseLatency}ms`);
 
-  // Process message in background (non-blocking)
-  // Use setImmediate to ensure response is fully sent before processing starts
   setImmediate(() => {
     processWhatsAppMessage(req.body).catch((error) => {
-      logger.error(`❌ Unhandled error in background processing:`, error);
+      logger.error("Unhandled background processing error:", error);
     });
   });
 });
@@ -378,12 +340,16 @@ app.post("/webhook/status", async (req, res) => {
   try {
     const { MessageSid, MessageStatus, ErrorCode, ErrorMessage } = req.body;
 
-    logger.info("Message status update:", {
-      MessageSid,
-      MessageStatus,
-      ErrorCode,
-      ErrorMessage,
-    });
+    if (MessageStatus === "failed" || MessageStatus === "undelivered" || ErrorCode) {
+      logger.warn("Message delivery issue", {
+        MessageSid,
+        MessageStatus,
+        ErrorCode,
+        ErrorMessage,
+      });
+    } else {
+      logger.debug("Message status", { MessageSid, MessageStatus });
+    }
 
     const { updateMessageLogStatus } = await import("./services/messageLog");
     if (MessageSid && MessageStatus) {
@@ -398,15 +364,11 @@ app.post("/webhook/status", async (req, res) => {
 // Start server immediately; MongoDB connects on first use (or in background)
 const PORT = config.port;
 app.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
-  logger.info(`Environment: ${config.nodeEnv}`);
+  logger.info(`Ready on :${PORT} (${config.nodeEnv})`);
 
   clearUsageRangeCache(); // so Cost & Usage never serves old cached "Other" data
 
-  // Start reminder scheduler (will use MongoDB when it connects)
   reminderScheduler.start();
-
-  logger.info("WhatsApp Reminders Bot is ready!");
 
   // Try MongoDB in background so it's ready for first request (don't block startup)
   connectMongo().catch((err) => {
@@ -416,14 +378,14 @@ app.listen(PORT, () => {
 
 // Graceful shutdown
 async function shutdown(): Promise<void> {
-  logger.info("Shutting down gracefully");
+  logger.info("Shutting down");
   reminderScheduler.stop();
   await closeMongo();
   process.exit(0);
 }
 
 process.on("SIGTERM", () => {
-  logger.info("SIGTERM received");
+  logger.info("SIGTERM");
   shutdown().catch((err) => {
     logger.error("Shutdown error:", err);
     process.exit(1);
@@ -431,7 +393,7 @@ process.on("SIGTERM", () => {
 });
 
 process.on("SIGINT", () => {
-  logger.info("SIGINT received");
+  logger.info("SIGINT");
   shutdown().catch((err) => {
     logger.error("Shutdown error:", err);
     process.exit(1);

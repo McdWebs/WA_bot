@@ -29,7 +29,7 @@ export async function sendTefilinTimePicker(
       (user && user.location) ||
       inferLocationFromPhoneNumber(phoneNumber);
 
-    logger.info(
+    logger.debug(
       `📍 Tefilin time picker - Location determined: "${baseLocation}" for ${phoneNumber}`
     );
 
@@ -37,7 +37,7 @@ export async function sendTefilinTimePicker(
     const sunsetData = await hebcalService.getSunsetData(baseLocation);
     const sunsetTime = sunsetData?.sunset || "18:00";
 
-    logger.info(
+    logger.debug(
       `⏰ Tefilin time picker - Sunset time retrieved: "${sunsetTime}" for location "${baseLocation}"`
     );
 
@@ -49,7 +49,7 @@ export async function sendTefilinTimePicker(
       "2": sunsetTime,
     };
 
-    logger.info(
+    logger.debug(
       `📤 Sending tefillin time picker template with variables {{1}}="${sunsetTime}", {{2}}="${sunsetTime}" to ${phoneNumber}`
     );
 
@@ -58,7 +58,7 @@ export async function sendTefilinTimePicker(
       "tefillinTimePicker",
       templateVariables
     );
-    logger.info(
+    logger.debug(
       `✅ Tefilin time picker template sent to ${phoneNumber} with sunset ${sunsetTime} for location ${baseLocation}`
     );
   } catch (error) {
@@ -179,7 +179,7 @@ export async function sendCandleLightingTimePicker(phoneNumber: string): Promise
       minutes
     ).padStart(2, "0")}`;
 
-    logger.info(
+    logger.debug(
       `📤 Sending candle lighting time picker with candle time ${formattedTime} for location ${location} on date ${date} to ${phoneNumber}`
     );
 
@@ -279,7 +279,7 @@ export async function sendTimePickerForSunset(
 
       // Final fallback to Jerusalem if still no data
       if (!sunsetData && validLocation !== "Jerusalem") {
-        logger.info(`Trying "Jerusalem" as final fallback`);
+        logger.debug(`Trying "Jerusalem" as final fallback`);
         sunsetData = await hebcalService.getSunsetData("Jerusalem");
         if (sunsetData) {
           validLocation = "Jerusalem";
@@ -318,7 +318,7 @@ export async function sendTimePickerForSunset(
       const result = `${String(reminderHours).padStart(2, "0")}:${String(
         reminderMins
       ).padStart(2, "0")}`;
-      logger.info(
+      logger.debug(
         `Calculated time: ${sunsetTime} - ${minutesBefore} minutes = ${result}`
       );
       return result;
@@ -381,7 +381,7 @@ export async function sendTimePickerForSunset(
       `5. שעה לפני (${calculateTimeBefore(60)})`;
 
     await twilioService.sendMessage(phoneNumber, formattedMessage);
-    logger.info(`Sent time picker options as text message to ${phoneNumber}`);
+    logger.debug(`Sent time picker options as text message to ${phoneNumber}`);
   } catch (error) {
     logger.error(
       `Error sending time picker for sunset to ${phoneNumber}:`,

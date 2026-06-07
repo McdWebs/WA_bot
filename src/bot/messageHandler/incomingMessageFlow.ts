@@ -250,8 +250,8 @@ export async function incomingMessageFlow(
     if (creatingReminderType) {
       // Allow direct minute values (10/20/30/45/60)
       if (/^(10|20|30|45|60)$/.test(normalizedMessage)) {
-        logger.info(
-          `⏰ Time picker selection detected as TEXT minutes: "${normalizedMessage}" for ${phoneNumber}, reminderType="${creatingReminderType}"`
+        logger.debug(
+          `Time picker text minutes "${normalizedMessage}" for ${creatingReminderType}`
         );
         // Send loading message for better UX
         await twilioService.sendMessage(phoneNumber, "⏳ שומר את התזכורת...");
@@ -273,8 +273,8 @@ export async function incomingMessageFlow(
         };
         const mapped = optionToMinutes[normalizedMessage];
         if (mapped) {
-          logger.info(
-            `⏰ Time picker numeric option detected as TEXT: "${normalizedMessage}" -> "${mapped}" for ${phoneNumber}, reminderType="${creatingReminderType}"`
+          logger.debug(
+            `Time picker text option "${normalizedMessage}" -> ${mapped} for ${creatingReminderType}`
           );
           await twilioService.sendMessage(phoneNumber, "⏳ שומר את התזכורת...");
           await saveReminderFromTimePicker(

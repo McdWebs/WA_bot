@@ -48,7 +48,7 @@ export async function interactiveButtonFlow(
     // Clear settings state so the conversation doesn't stay "stuck" in settings.
     settingsStateManager.clearState(phoneNumber);
 
-    logger.info(
+    logger.debug(
       `🔘 Handling interactive button click from ${phoneNumber}: "${buttonIdentifier}"`
     );
 
@@ -76,13 +76,13 @@ export async function interactiveButtonFlow(
       .replace(/^[1-9][\.:]\s*/, "")
       .replace(/^[1-9]\s*/, "");
 
-    logger.info(
+    logger.debug(
       `🔍 Button parsing for ${phoneNumber}: original="${buttonIdentifier}", normalized="${normalizedButton}", clean="${cleanButton}"`
     );
 
     // Check creatingReminderType BEFORE processing
     const creatingReminderTypeForLog = getCreatingReminderType(state, phoneNumber);
-    logger.info(
+    logger.debug(
       `📋 Current creatingReminderType for ${phoneNumber}: "${creatingReminderTypeForLog}"`
     );
 
@@ -161,7 +161,7 @@ export async function interactiveButtonFlow(
       /^(10|20|30|45|60)$/.test(cleanButton) ||
       /^(10|20|30|45|60)$/.test(buttonIdentifier.trim());
 
-    logger.info(
+    logger.debug(
       `⏰ Time picker check for ${phoneNumber}: isTimePickerSelection=${isTimePickerSelection}, button="${buttonIdentifier}", normalized="${normalizedButton}", clean="${cleanButton}"`
     );
 
@@ -262,7 +262,7 @@ export async function interactiveButtonFlow(
     } else if (isEditReminderButton) {
       // User clicked "Edit" on a reminder → store reminder ID and send time picker template
       const reminderId = normalizedButton.replace("edit_", "");
-      logger.info(
+      logger.debug(
         `✅ Detected edit reminder button for reminder ID: ${reminderId}`
       );
 
@@ -318,7 +318,7 @@ export async function interactiveButtonFlow(
         return;
       }
 
-      logger.info(
+      logger.debug(
         `👩‍🧕 Tahara time selected (picker) for ${phoneNumber}: ${timeOfDay}, mode=${mode}`
       );
       await twilioService.sendMessage(phoneNumber, "⏳ שומר את התזכורת...");
@@ -368,14 +368,14 @@ export async function interactiveButtonFlow(
 
           // Clear state
           reminderStateManager.clearState(phoneNumber);
-          logger.info(
+          logger.debug(
             `✅ Updated reminder ${reminderEditState.reminderId} with offset ${offsetMinutes} for ${phoneNumber}`
           );
         }
       } else {
         // Creating new reminder - need to know which type
         const creatingReminderType = getCreatingReminderType(state, phoneNumber);
-        logger.info(
+        logger.debug(
           `⏰ Time picker selection detected: button="${buttonIdentifier}", normalized="${normalizedButton}", creatingReminderType="${creatingReminderType}" for ${phoneNumber}`
         );
         if (creatingReminderType) {
@@ -416,7 +416,7 @@ export async function interactiveButtonFlow(
               }
             }
 
-            logger.info(
+            logger.debug(
               `💾 Extracted timeId: "${timeId}" from button="${buttonIdentifier}" for ${phoneNumber}`
             );
 
@@ -451,7 +451,7 @@ export async function interactiveButtonFlow(
       }
     } else if (isTaaraMenuSelection) {
       // Women's flow: Hefsek Tahara – FIRST ask user to choose city (bot later uses sunset for that city)
-      logger.info(
+      logger.debug(
         `👩‍🧕 Tahara flow started (hefsek only) for ${phoneNumber}, button="${buttonIdentifier}"`
       );
       state.femaleFlowMode.set(phoneNumber, "taara");
@@ -467,7 +467,7 @@ export async function interactiveButtonFlow(
       }
     } else if (isClean7MenuSelection) {
       // Women's flow: Seven clean days – start_date = first day of the count (today)
-      logger.info(
+      logger.debug(
         `👩‍🧕 7 clean days flow selected for ${phoneNumber}, button="${buttonIdentifier}"`
       );
       const todayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
@@ -477,7 +477,7 @@ export async function interactiveButtonFlow(
       });
     } else if (isTaaraPlusClean7MenuSelection) {
       // Women's flow: Hefsek + 7 clean days – FIRST ask for city, then hefsek time picker, then CLEAN_7_START_TAARA_TIME
-      logger.info(
+      logger.debug(
         `👩‍🧕 Tahara + 7 clean days flow started for ${phoneNumber}, button="${buttonIdentifier}"`
       );
       state.femaleFlowMode.set(phoneNumber, "taara_plus_clean7");
@@ -497,7 +497,7 @@ export async function interactiveButtonFlow(
       (normalizedButton.includes("activate") && normalizedButton.includes("clean"))
     ) {
       // User pressed "להתחיל 7 נקיים" in CLEAN_7_START_TAARA_TIME template → activate 7 clean days
-      logger.info(
+      logger.debug(
         `👩‍🧕 Activate 7 clean days for ${phoneNumber}, button="${buttonIdentifier}"`
       );
       const todayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
@@ -511,7 +511,7 @@ export async function interactiveButtonFlow(
       normalizedButton.includes("stop")
     ) {
       // User pressed "לעצירת התזכורת לחצי" → disable taara reminder
-      logger.info(
+      logger.debug(
         `👩‍🧕 Stop taara reminder for ${phoneNumber}, button="${buttonIdentifier}"`
       );
       await disableTaaraReminder(phoneNumber);
@@ -548,7 +548,7 @@ export async function interactiveButtonFlow(
         normalizedButton.includes("cancel") ||
         normalizedButton.includes("ביטול")
       ) {
-        logger.info(
+        logger.debug(
           `👩‍🧕 Tahara flow cancelled by user ${phoneNumber}, button="${buttonIdentifier}"`
         );
         state.femaleFlowMode.delete(phoneNumber);
@@ -557,7 +557,7 @@ export async function interactiveButtonFlow(
           "התזכורת להפסק טהרה בוטלה."
         );
       } else {
-        logger.info(
+        logger.debug(
           `👩‍🧕 Tahara time selected for ${phoneNumber}: ${timeOfDay}, mode=${mode}`
         );
         const userForSunset = await mongoService.getUserByPhone(phoneNumber);
@@ -594,7 +594,7 @@ export async function interactiveButtonFlow(
       const city = buttonIdentifier;
       await completeLocationSelection(state, phoneNumber, city, flowContext);
     } else {
-      logger.info(
+      logger.debug(
         `⚠️ Button "${buttonIdentifier}" is not recognized - no action taken`
       );
     }

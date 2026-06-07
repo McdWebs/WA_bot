@@ -22,7 +22,7 @@ export function inferLocationFromPhoneNumber(phoneNumber: string): string {
   // Extract country code (first 1-3 digits after +)
   for (const [code, city] of Object.entries(countryCodeMap)) {
     if (cleaned.startsWith(`+${code}`) || cleaned.startsWith(code)) {
-      logger.info(
+      logger.debug(
         `Inferred location "${city}" from phone number country code: ${code}`
       );
       return city;
@@ -30,7 +30,7 @@ export function inferLocationFromPhoneNumber(phoneNumber: string): string {
   }
 
   // Default to Jerusalem for Hebrew calendar
-  logger.info(
+  logger.debug(
     `Using default location "Jerusalem" for phone number: ${phoneNumber}`
   );
   return "Jerusalem";

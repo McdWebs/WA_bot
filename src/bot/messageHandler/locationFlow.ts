@@ -41,9 +41,7 @@ export async function completeLocationSelection(
     return true;
   }
 
-  logger.info(
-    `✅ Saved location "${trimmed}" for reminder flow (${flowContext}) for ${phoneNumber}`
-  );
+  logger.debug(`Saved location "${trimmed}" for ${flowContext}`);
 
   if (flowContext === "candle_lighting") {
     await sendCandleLightingTimePicker(phoneNumber);
@@ -52,12 +50,12 @@ export async function completeLocationSelection(
   } else if (flowContext === "shema") {
     await sendShemaTimePicker(state, phoneNumber);
   } else if (flowContext === "taara") {
-    logger.info(
+    logger.debug(
       `👩‍🧕 City "${trimmed}" selected for tahara flow for ${phoneNumber} – sending taara time picker`
     );
     await sendTaaraTimePicker(phoneNumber);
   } else {
-    logger.info(
+    logger.debug(
       `⚠️ Location "${trimmed}" saved but no handler for reminder type "${flowContext}" for ${phoneNumber}`
     );
     state.creatingReminderType.delete(phoneNumber);
@@ -81,9 +79,7 @@ export async function continueReminderFlowWithSavedLocation(
   state.awaitingCustomLocation.delete(phoneNumber);
 
   state.creatingReminderType.set(phoneNumber, reminderType);
-  logger.info(
-    `📍 Using saved location "${savedLocation}" for ${phoneNumber}, skipping city picker for ${reminderType}`
-  );
+  logger.debug(`Using saved location "${savedLocation}" for ${reminderType}`);
 
   if (reminderType === "tefillin") {
     await sendTefilinTimePicker(state, phoneNumber, savedLocation);

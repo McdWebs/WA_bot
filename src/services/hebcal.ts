@@ -35,7 +35,7 @@ export class HebcalService {
   ): Promise<{ latitude: number; longitude: number }> {
     const geo = this.parseStoredGeoLocation(location);
     if (geo) {
-      logger.info(
+      logger.debug(
         `Using stored GPS coordinates for zmanim: lat=${geo.lat}, lon=${geo.lng}`
       );
       return { latitude: geo.lat, longitude: geo.lng };
@@ -53,7 +53,7 @@ export class HebcalService {
 
     if (coordMap[normalizedLocation]) {
       const c = coordMap[normalizedLocation];
-      logger.info(
+      logger.debug(
         `Using hardcoded coordinates for ${normalizedLocation}: lat=${c.latitude}, lon=${c.longitude}`
       );
       return c;
@@ -62,7 +62,7 @@ export class HebcalService {
     const data = await this.getHebcalData(location, date);
     const latitude = data.location?.latitude || 31.7683;
     const longitude = data.location?.longitude || 35.2137;
-    logger.info(
+    logger.debug(
       `Using Hebcal calendar API coordinates for ${location}: lat=${latitude}, lon=${longitude}`
     );
     return { latitude, longitude };
@@ -163,7 +163,7 @@ export class HebcalService {
         }
       );
 
-      logger.info(
+      logger.debug(
         `Zmanim data retrieved for lat: ${latitude}, lon: ${longitude}, date: ${
           date || "today"
         }`
@@ -193,7 +193,7 @@ export class HebcalService {
       const todayStr = today.toISOString().split("T")[0];
 
       // Try to get sunset from Zmanim API (most accurate)
-      logger.info(
+      logger.debug(
         `Getting sunset from Zmanim API for ${location} (lat: ${latitude}, lon: ${longitude})`
       );
       const zmanimData = await this.getZmanimData(latitude, longitude, date);
@@ -208,7 +208,7 @@ export class HebcalService {
           const hours = timeMatch[1];
           const minutes = timeMatch[2];
           const sunsetTime = `${hours}:${minutes}`;
-          logger.info(
+          logger.debug(
             `Sunset time from Zmanim API: ${sunsetTime} (from ${sunsetISO})`
           );
           return sunsetTime;
@@ -220,7 +220,7 @@ export class HebcalService {
         const sunsetTime = `${String(hours).padStart(2, "0")}:${String(
           minutes
         ).padStart(2, "0")}`;
-        logger.info(`Sunset time from Zmanim API (parsed): ${sunsetTime}`);
+        logger.debug(`Sunset time from Zmanim API (parsed): ${sunsetTime}`);
         return sunsetTime;
       }
 
@@ -326,7 +326,7 @@ export class HebcalService {
           candleMins
         ).padStart(2, "0")}`;
 
-        logger.info(
+        logger.debug(
           `Found next candle lighting time for ${location} on ${dateStr}: sunset=${sunsetTime}, candleLighting=${candleTime}`
         );
 
@@ -398,17 +398,17 @@ export class HebcalService {
     date?: string
   ): Promise<SunsetData | null> {
     try {
-      logger.info(
+      logger.debug(
         `Getting sunset data for location: ${location}, date: ${
           date || "today"
         }`
       );
 
       const sunset = await this.getSunsetTime(location, date);
-      logger.info(`Sunset time result: ${sunset || "null"}`);
+      logger.debug(`Sunset time result: ${sunset || "null"}`);
 
       const candleLighting = await this.getCandleLightingTime(location, date);
-      logger.info(`Candle lighting result: ${candleLighting || "null"}`);
+      logger.debug(`Candle lighting result: ${candleLighting || "null"}`);
 
       const today = date ? new Date(date) : new Date();
       const dateStr = today.toISOString().split("T")[0];
@@ -417,7 +417,7 @@ export class HebcalService {
       // But just in case, ensure we always have a sunset time
       const finalSunset = sunset || this.getDefaultSunsetTime(today);
 
-      logger.info(
+      logger.debug(
         `Final sunset data: ${finalSunset}, candle lighting: ${
           candleLighting || "none"
         }`
@@ -510,7 +510,7 @@ export class HebcalService {
 
       if (zmanimData?.times) {
         // Log available fields for debugging
-        logger.info(
+        logger.debug(
           `Available Zmanim fields: ${Object.keys(zmanimData.times).join(", ")}`
         );
 
@@ -527,7 +527,7 @@ export class HebcalService {
           zmanimData.times.sof_zman_shema;
 
         if (time) {
-          logger.info(`Found Shema time: ${time}`);
+          logger.debug(`Found Shema time: ${time}`);
           const timeMatch = time.match(/T(\d{2}):(\d{2}):\d{2}/);
           if (timeMatch) {
             return `${timeMatch[1]}:${timeMatch[2]}`;
@@ -557,7 +557,7 @@ export class HebcalService {
             const shemaTime = `${String(hours).padStart(2, "0")}:${String(
               minutes
             ).padStart(2, "0")}`;
-            logger.info(`Calculated Shema time: ${shemaTime}`);
+            logger.debug(`Calculated Shema time: ${shemaTime}`);
             return shemaTime;
           }
         }

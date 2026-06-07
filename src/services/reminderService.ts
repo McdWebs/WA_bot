@@ -243,7 +243,7 @@ export class ReminderService {
         return "❌ ניתן למחוק רק את התזכורות שלך.";
       }
 
-      logger.info(`Deleting reminder ${reminderId} for user ${phoneNumber}`);
+      logger.debug(`Deleting reminder ${reminderId} for user ${phoneNumber}`);
       
       // Delete from database
       await mongoService.deleteReminderSetting(reminderId);
@@ -256,7 +256,7 @@ export class ReminderService {
         return "❌ שגיאה: התזכורת לא נמחקה. נסה שוב.";
       }
 
-      logger.info(`Successfully deleted reminder ${reminderId} for user ${phoneNumber}`);
+      logger.debug(`Deleted reminder ${reminderId} for user ${phoneNumber}`);
       const typeNameHeb = this.formatReminderTypeHebrew(reminderToDelete.reminder_type);
       return `✅ התזכורת "${typeNameHeb}" נמחקה בהצלחה.`;
     } catch (error) {

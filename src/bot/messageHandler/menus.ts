@@ -11,7 +11,7 @@ export async function sendMainMenu(
   gender: Gender
 ): Promise<void> {
   try {
-    logger.info(
+    logger.debug(
       `📋 Sending main menu to ${phoneNumber} for gender: ${gender}`
     );
 

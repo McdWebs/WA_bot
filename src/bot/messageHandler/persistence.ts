@@ -1,7 +1,7 @@
 import mongoService from "../../services/mongo";
 import twilioService from "../../services/twilio";
 import hebcalService from "../../services/hebcal";
-import logger from "../../utils/logger";
+import logger, { shortPhone } from "../../utils/logger";
 import timezoneService from "../../utils/timezone";
 import { config } from "../../config";
 import type { ReminderType } from "../../types";
@@ -20,14 +20,8 @@ export async function saveReminderFromTimePicker(
   timeId: string
 ): Promise<void> {
   try {
-    logger.info(
-      `💾 Attempting to save reminder: type="${reminderType}", timeId="${timeId}" for ${phoneNumber}`
-    );
-
-    // Ensure user exists – create if missing (e.g. user came in via templates only)
     let user = await mongoService.getUserByPhone(phoneNumber);
     if (!user) {
-      logger.info(`👤 Creating new user for ${phoneNumber}`);
       user = await mongoService.createUser({
         phone_number: phoneNumber,
         status: "active",
@@ -40,8 +34,6 @@ export async function saveReminderFromTimePicker(
       throw new Error(`User not found or missing ID for ${phoneNumber}`);
     }
 
-    logger.info(`✅ User found: ${phoneNumber}, user_id: ${user.id}`);
-
     const timeOffsetMap: Record<string, number> = {
       "10": -10,
       "20": -20,
@@ -51,9 +43,6 @@ export async function saveReminderFromTimePicker(
     };
 
     const timeOffsetMinutes = timeOffsetMap[timeId] ?? 0;
-    logger.info(
-      `⏰ Mapped timeId "${timeId}" to offset ${timeOffsetMinutes} minutes`
-    );
 
     const reminderData = {
       user_id: user.id,
@@ -62,9 +51,7 @@ export async function saveReminderFromTimePicker(
       time_offset_minutes: timeOffsetMinutes,
     };
 
-    logger.info(`💾 Saving reminder to DB:`, reminderData);
-    const savedReminder = await mongoService.upsertReminderSetting(reminderData);
-    logger.info(`✅ Reminder saved successfully:`, savedReminder);
+    await mongoService.upsertReminderSetting(reminderData);
 
     state.creatingReminderType.delete(phoneNumber);
 
@@ -86,7 +73,7 @@ export async function saveReminderFromTimePicker(
     };
 
     logger.info(
-      `✅ Reminder saved: ${reminderType} with offset ${timeOffsetMinutes} minutes for ${phoneNumber}`
+      `[${shortPhone(phoneNumber)}] saved ${reminderType} offset=${timeOffsetMinutes}m`
     );
 
     // Send completion template - if template fails, send simple text confirmation instead
@@ -172,9 +159,7 @@ export async function saveCandleLightingReminder(
 
     state.creatingReminderType.delete(phoneNumber);
 
-    logger.info(
-      `✅ Candle lighting reminder saved for ${phoneNumber} with city: ${city}`
-    );
+    logger.info(`[${shortPhone(phoneNumber)}] saved candle_lighting city=${city}`);
 
     // Send completion template: {{1}} עיר, {{2}} כניסת שבת, {{3}} זמן התזכורת
     try {
@@ -274,9 +259,7 @@ export async function saveTaaraReminder(
       test_time: timeOfDay || undefined,
     });
 
-    logger.info(
-      `✅ Tahara reminder saved for ${phoneNumber} at ${timeOfDay} (offsetMinutes=${offsetMinutes})`
-    );
+    logger.info(`[${shortPhone(phoneNumber)}] saved taara ${timeOfDay}`);
   } catch (error) {
     logger.error(
       `Error saving tahara reminder for ${phoneNumber}:`,
@@ -300,7 +283,7 @@ export async function disableTaaraReminder(phoneNumber: string): Promise<void> {
     const taara = settings.find((s) => s.reminder_type === "taara");
     if (taara?.id) {
       await mongoService.updateReminderSettingById(taara.id, { enabled: false });
-      logger.info(`Tahara reminder disabled for ${phoneNumber}`);
+      logger.info(`[${shortPhone(phoneNumber)}] taara disabled`);
     }
   } catch (error) {
     logger.error(`Error disabling taara reminder for ${phoneNumber}:`, error);
@@ -344,9 +327,7 @@ export async function saveClean7Reminder(
       clean_7_start_date: start,
     });
 
-    logger.info(
-      `✅ 7-clean-days reminder saved for ${phoneNumber} at ${timeOfDay}, start_date=${start}`
-    );
+    logger.info(`[${shortPhone(phoneNumber)}] saved clean_7 start=${start}`);
   } catch (error) {
     logger.error(
       `Error saving 7-clean-days reminder for ${phoneNumber}:`,

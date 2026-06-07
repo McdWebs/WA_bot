@@ -68,6 +68,20 @@ export const config = {
     // When set, CORS allows this origin for /api/dashboard (e.g. when frontend is on another host)
     origin: process.env.DASHBOARD_ORIGIN || "",
   },
+
+  // Broadcast: pace sends to avoid Twilio/WhatsApp error 63018 (channel rate limit)
+  broadcast: {
+    delayMs: parseInt(process.env.BROADCAST_DELAY_MS || "2000", 10),
+    rateLimitRetries: parseInt(process.env.BROADCAST_RATE_LIMIT_RETRIES || "5", 10),
+    rateLimitBackoffMs: parseInt(process.env.BROADCAST_RATE_LIMIT_BACKOFF_MS || "30000", 10),
+    deliveryPollIntervalMs: parseInt(process.env.BROADCAST_DELIVERY_POLL_MS || "3000", 10),
+    deliveryPollMaxWaitMs: parseInt(process.env.BROADCAST_DELIVERY_POLL_MAX_MS || "180000", 10),
+    // Max successful submits per run across both batches (0 = no cap). Set to your
+    // WhatsApp 24h messaging-tier limit to avoid sends going undelivered past the cap.
+    maxPerRun: parseInt(process.env.BROADCAST_MAX_PER_RUN || "0", 10),
+    // Campaign key: dedupe/resume is tracked per campaign. Bump this to start a fresh broadcast.
+    campaign: process.env.BROADCAST_CAMPAIGN || "contribution",
+  },
 };
 
 // Validate required environment variables

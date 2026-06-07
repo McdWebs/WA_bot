@@ -90,7 +90,7 @@ export async function getDb(): Promise<Db> {
       client = newClient;
       const dbNameFromUri = new URL(uri).pathname.replace("/", "") || "wa_bot";
       db = client.db(dbNameFromUri);
-      logger.info(`Connected to MongoDB database: ${db.databaseName}`);
+      logger.info(`MongoDB connected (${db.databaseName})`);
       return db;
     } catch (error) {
       connectPromise = null;
@@ -366,6 +366,69 @@ export class MongoService {
       }));
       } catch (error) {
         logger.error("Error fetching all users (Mongo):", error);
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Partition all users into those that have at least one reminder (enabled or not)
+   * and those that have none. Used by the broadcast feature to send in two batches.
+   * Matches reminder_preferences.user_id whether stored as the user's string `id`,
+   * the string form of `_id`, or a raw ObjectId (same robustness as the schedulers).
+   */
+  async getUsersForBroadcast(): Promise<{
+    withReminders: User[];
+    withoutReminders: User[];
+  }> {
+    return withMongoRetry(async () => {
+      try {
+        const users = await getUsersCollection();
+        const pipeline = [
+          {
+            $lookup: {
+              from: "reminder_preferences",
+              let: { userOid: "$_id", userIdStr: "$id" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $or: [
+                        { $eq: ["$user_id", "$$userIdStr"] },
+                        { $eq: ["$user_id", { $toString: "$$userOid" }] },
+                        {
+                          $and: [
+                            { $eq: [{ $type: "$user_id" }, "objectId"] },
+                            { $eq: ["$user_id", "$$userOid"] },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                },
+                { $limit: 1 },
+              ],
+              as: "reminders",
+            },
+          },
+          { $addFields: { hasReminder: { $gt: [{ $size: "$reminders" }, 0] } } },
+          { $project: { reminders: 0 } },
+          { $sort: { created_at: 1 } },
+        ];
+        const result = await users.aggregate(pipeline).toArray();
+        const withReminders: User[] = [];
+        const withoutReminders: User[] = [];
+        for (const u of result as any[]) {
+          const user: User = { ...u, id: u.id || u._id?.toString() };
+          if ((u as any).hasReminder) {
+            withReminders.push(user);
+          } else {
+            withoutReminders.push(user);
+          }
+        }
+        return { withReminders, withoutReminders };
+      } catch (error) {
+        logger.error("Error partitioning users for broadcast (Mongo):", error);
         throw error;
       }
     });
@@ -669,31 +732,11 @@ export class MongoService {
         { $match: { "users.status": "active" } },
       ];
 
-      logger.info(`🧪 TEST MODE: Executing MongoDB aggregation pipeline for active reminders`);
       const result = await reminders.aggregate(pipeline).toArray();
-      logger.info(`🧪 TEST MODE: MongoDB query returned ${result.length} result(s)`);
-      
-      // Log details about what was found
-      if (result.length > 0) {
-        result.forEach((doc: any) => {
-          logger.info(
-            `🧪 TEST MODE: Found reminder ${doc._id} (${doc.reminder_type}) ` +
-            `for user ${doc.users?.phone_number || 'unknown'}, ` +
-            `test_time: ${doc.test_time || 'none'}, enabled: ${doc.enabled}`
-          );
-        });
-      } else {
-        // Debug: Check if there are any reminders at all
+      logger.debug(`TEST MODE: ${result.length} active reminder(s)`);
+      if (result.length === 0) {
         const allReminders = await reminders.find({}).toArray();
-        logger.info(`🧪 TEST MODE: Total reminders in DB: ${allReminders.length}`);
-        if (allReminders.length > 0) {
-          allReminders.forEach((r: any) => {
-            logger.info(
-              `🧪 TEST MODE: Reminder ${r._id} - enabled: ${r.enabled}, ` +
-              `user_id: ${r.user_id}, test_time: ${r.test_time || 'none'}`
-            );
-          });
-        }
+        logger.debug(`TEST MODE: ${allReminders.length} total reminder(s) in DB`);
       }
 
       return result.map((doc: any) => {
@@ -922,59 +965,34 @@ export class MongoService {
       try {
         const reminders = await getReminderPreferencesCollection();
       
-      logger.info(`Attempting to delete reminder with ID: ${reminderId} (type: ${typeof reminderId})`);
-      
-      // Try to delete by _id (ObjectId) or id field
       let filter: any;
       if (ObjectId.isValid(reminderId)) {
-        // Try both _id (as ObjectId) and id (as string)
         filter = {
           $or: [
             { _id: new ObjectId(reminderId) },
             { id: reminderId },
           ],
         };
-        logger.info(`Using ObjectId filter for deletion: ${JSON.stringify(filter)}`);
       } else {
         filter = { id: reminderId };
-        logger.info(`Using string id filter for deletion: ${JSON.stringify(filter)}`);
       }
-      
-      // First, check if document exists
-      const existing = await reminders.findOne(filter);
-      if (existing) {
-        logger.info(`Found reminder to delete: ${JSON.stringify({ _id: existing._id, id: existing.id })}`);
-      } else {
-        logger.warn(`No reminder found with filter: ${JSON.stringify(filter)}`);
-        // Try alternative: search by _id as ObjectId if valid
-        if (ObjectId.isValid(reminderId)) {
-          const altFilter = { _id: new ObjectId(reminderId) };
-          const altExisting = await reminders.findOne(altFilter);
-          if (altExisting) {
-            logger.info(`Found reminder with alternative filter, but this shouldn't happen`);
-          }
-        }
-      }
-      
+
       const result = await reminders.deleteOne(filter);
-      
-      logger.info(`Delete result: ${JSON.stringify({ deletedCount: result.deletedCount, acknowledged: result.acknowledged })}`);
-      
+
       if (result.deletedCount === 0) {
-        logger.warn(`No reminder found to delete with ID: ${reminderId}. Filter used: ${JSON.stringify(filter)}`);
-        // Try one more time with just _id as ObjectId if it's valid
         if (ObjectId.isValid(reminderId)) {
-          const directFilter = { _id: new ObjectId(reminderId) };
-          const directResult = await reminders.deleteOne(directFilter);
-          logger.info(`Direct _id delete attempt: ${JSON.stringify({ deletedCount: directResult.deletedCount })}`);
+          const directResult = await reminders.deleteOne({
+            _id: new ObjectId(reminderId),
+          });
           if (directResult.deletedCount === 0) {
             throw new Error(`Failed to delete reminder with ID: ${reminderId}`);
           }
+          logger.debug(`Deleted reminder ${reminderId}`);
         } else {
           throw new Error(`Failed to delete reminder with ID: ${reminderId}`);
         }
       } else {
-        logger.info(`Successfully deleted reminder with ID: ${reminderId}`);
+        logger.debug(`Deleted reminder ${reminderId}`);
       }
       } catch (error) {
         logger.error("Error deleting reminder setting (Mongo):", error);

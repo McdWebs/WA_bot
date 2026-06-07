@@ -2,12 +2,20 @@ import { Router, Request, Response } from "express";
 import { config } from "../config";
 import mongoService from "../services/mongo";
 import twilioService from "../services/twilio";
+import logger from "../utils/logger";
 import { getTwilioUsage } from "../services/twilioUsage";
 import {
   getMessageStats,
   getMessageCountByPhone,
+  updateMessageLogStatus,
 } from "../services/messageLog";
 import { getTwilioUsageForRange } from "../services/twilioUsage";
+import {
+  ensureBroadcastIndexes,
+  getAlreadySentPhones,
+  recordBroadcastSend,
+  updateBroadcastStatus,
+} from "../services/broadcastService";
 
 const router = Router();
 
@@ -221,24 +229,279 @@ router.get("/messages", async (req: Request, res: Response) => {
   }
 });
 
-/** POST /api/dashboard/broadcast - Send contribution template to all users */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTwilioRateLimitError(error: unknown): boolean {
+  const code = (error as { code?: number | string })?.code;
+  return code === 63018 || code === "63018";
+}
+
+async function sendBroadcastTemplate(phoneNumber: string): Promise<string> {
+  const { rateLimitRetries, rateLimitBackoffMs } = config.broadcast;
+  let backoffMs = rateLimitBackoffMs;
+
+  for (let attempt = 0; attempt <= rateLimitRetries; attempt++) {
+    try {
+      const { sid } = await twilioService.sendTemplateMessage(phoneNumber, "broadcast");
+      return sid;
+    } catch (error) {
+      if (!isTwilioRateLimitError(error) || attempt === rateLimitRetries) {
+        throw error;
+      }
+      logger.warn(
+        `Broadcast rate limit (63018) for ${phoneNumber}, retry ${attempt + 1}/${rateLimitRetries} in ${backoffMs}ms`
+      );
+      await sleep(backoffMs);
+      backoffMs *= 2;
+    }
+  }
+
+  throw new Error("Broadcast send failed after retries");
+}
+
+type DeliveryBucket = "delivered" | "sent" | "undelivered";
+
+function categorizeDeliveryStatus(status: string): DeliveryBucket {
+  const normalized = status.toLowerCase();
+  if (normalized === "delivered" || normalized === "read") {
+    return "delivered";
+  }
+  if (normalized === "failed" || normalized === "undelivered" || normalized === "canceled") {
+    return "undelivered";
+  }
+  return "sent";
+}
+
+function isTerminalDeliveryStatus(status: string): boolean {
+  const normalized = status.toLowerCase();
+  return ["delivered", "read", "failed", "undelivered", "canceled"].includes(normalized);
+}
+
+/**
+ * Polls Twilio for the final delivery status of each sent message and returns a
+ * sid -> status map. Also mirrors each status into the message log and the
+ * broadcast recipient tracker (so dedupe/resume sees undelivered ones as retryable).
+ */
+async function pollBroadcastDeliveryStatuses(
+  campaign: string,
+  messageSids: string[]
+): Promise<{ statuses: Map<string, string>; deliveryPending: boolean }> {
+  const statuses = new Map<string, string>();
+  if (messageSids.length === 0) {
+    return { statuses, deliveryPending: false };
+  }
+
+  const { deliveryPollIntervalMs, deliveryPollMaxWaitMs } = config.broadcast;
+  const started = Date.now();
+  let latestStatuses: string[] = [];
+
+  while (Date.now() - started < deliveryPollMaxWaitMs) {
+    latestStatuses = await Promise.all(
+      messageSids.map((sid) => twilioService.fetchMessageStatus(sid))
+    );
+
+    for (let i = 0; i < messageSids.length; i++) {
+      statuses.set(messageSids[i], latestStatuses[i]);
+      updateMessageLogStatus(messageSids[i], latestStatuses[i]).catch(() => {});
+      updateBroadcastStatus(campaign, messageSids[i], latestStatuses[i]).catch(() => {});
+    }
+
+    if (latestStatuses.every(isTerminalDeliveryStatus)) {
+      break;
+    }
+
+    await sleep(deliveryPollIntervalMs);
+  }
+
+  return {
+    statuses,
+    deliveryPending: !latestStatuses.every(isTerminalDeliveryStatus),
+  };
+}
+
+/** Tally delivery buckets for a specific list of sids using the polled status map. */
+function countDelivery(
+  sids: string[],
+  statuses: Map<string, string>
+): { delivered: number; sent: number; undelivered: number } {
+  const counts = { delivered: 0, sent: 0, undelivered: 0 };
+  for (const sid of sids) {
+    const status = statuses.get(sid);
+    // No status yet (still in flight) counts as "sent / in transit".
+    counts[status ? categorizeDeliveryStatus(status) : "sent"]++;
+  }
+  return counts;
+}
+
+interface BroadcastBatchDef {
+  name: string;
+  users: { phone_number: string }[];
+}
+
+interface BroadcastBatchResult {
+  name: string;
+  total: number;
+  skipped: number;
+  submitted: number;
+  failed: number;
+  remaining: number;
+  sids: string[];
+}
+
+/**
+ * POST /api/dashboard/broadcast - Send the campaign template to users in two batches:
+ *   1) users with at least one reminder, then 2) everyone else.
+ * Already-delivered users are skipped (dedupe/resume), and an optional per-run cap
+ * (BROADCAST_MAX_PER_RUN) stops once the WhatsApp 24h tier limit is reached so the
+ * overflow is left for the next run instead of going undelivered.
+ */
 router.post("/broadcast", async (_req: Request, res: Response) => {
   try {
-    const users = await mongoService.getAllUsers({ limit: 2000, skip: 0 });
-    let sent = 0;
-    let failed = 0;
+    await ensureBroadcastIndexes();
 
-    for (const user of users) {
-      try {
-        await twilioService.sendTemplateMessage(user.phone_number, "broadcast");
-        sent++;
-      } catch {
-        failed++;
+    const { campaign, delayMs, maxPerRun } = config.broadcast;
+    const { withReminders, withoutReminders } =
+      await mongoService.getUsersForBroadcast();
+    const alreadySent = await getAlreadySentPhones(campaign);
+
+    const batches: BroadcastBatchDef[] = [
+      { name: "with_reminders", users: withReminders },
+      { name: "without_reminders", users: withoutReminders },
+    ];
+
+    const totalUsers = withReminders.length + withoutReminders.length;
+    logger.info(
+      `Starting broadcast campaign="${campaign}" total=${totalUsers} ` +
+        `withReminders=${withReminders.length} withoutReminders=${withoutReminders.length} ` +
+        `alreadySent=${alreadySent.size} maxPerRun=${maxPerRun || "∞"}`
+    );
+
+    const batchResults: BroadcastBatchResult[] = [];
+    const allSids: string[] = [];
+    let submittedThisRun = 0;
+    let capReached = false;
+
+    for (const batch of batches) {
+      const pending = batch.users.filter((u) => !alreadySent.has(u.phone_number));
+      const skipped = batch.users.length - pending.length;
+      let submitted = 0;
+      let failed = 0;
+      let processed = 0;
+      const sids: string[] = [];
+
+      logger.info(
+        `Broadcast batch="${batch.name}" total=${batch.users.length} ` +
+          `pending=${pending.length} skipped=${skipped}`
+      );
+
+      for (let i = 0; i < pending.length; i++) {
+        if (maxPerRun > 0 && submittedThisRun >= maxPerRun) {
+          capReached = true;
+          break;
+        }
+
+        const user = pending[i];
+        processed++;
+        try {
+          const sid = await sendBroadcastTemplate(user.phone_number);
+          sids.push(sid);
+          allSids.push(sid);
+          submitted++;
+          submittedThisRun++;
+          await recordBroadcastSend(campaign, user.phone_number, batch.name, sid, "queued");
+          if (submittedThisRun % 25 === 0) {
+            logger.info(`Broadcast progress ${submittedThisRun} submitted this run`);
+          }
+        } catch (error) {
+          failed++;
+          await recordBroadcastSend(campaign, user.phone_number, batch.name, undefined, "failed");
+          logger.error(`Broadcast failed for ${user.phone_number}:`, error);
+        }
+
+        const moreInBatch = i < pending.length - 1;
+        if (moreInBatch && delayMs > 0) {
+          await sleep(delayMs);
+        }
+      }
+
+      batchResults.push({
+        name: batch.name,
+        total: batch.users.length,
+        skipped,
+        submitted,
+        failed,
+        remaining: pending.length - processed,
+        sids,
+      });
+
+      if (capReached) {
+        logger.info(`Broadcast per-run cap (${maxPerRun}) reached; stopping early`);
+        break;
       }
     }
 
-    res.json({ sent, failed, total: users.length });
+    // Account for batches not started at all because the cap was hit earlier.
+    while (batchResults.length < batches.length) {
+      const batch = batches[batchResults.length];
+      const pending = batch.users.filter((u) => !alreadySent.has(u.phone_number));
+      batchResults.push({
+        name: batch.name,
+        total: batch.users.length,
+        skipped: batch.users.length - pending.length,
+        submitted: 0,
+        failed: 0,
+        remaining: pending.length,
+        sids: [],
+      });
+    }
+
+    logger.info(
+      `Broadcast submits finished: submitted=${submittedThisRun}, polling delivery for ${allSids.length} message(s)`
+    );
+
+    const { statuses, deliveryPending } = await pollBroadcastDeliveryStatuses(
+      campaign,
+      allSids
+    );
+
+    const totals = countDelivery(allSids, statuses);
+    const totalSkipped = batchResults.reduce((n, b) => n + b.skipped, 0);
+    const totalFailed = batchResults.reduce((n, b) => n + b.failed, 0);
+    const totalRemaining = batchResults.reduce((n, b) => n + b.remaining, 0);
+
+    logger.info(
+      `Broadcast finished: submitted=${submittedThisRun}, failed=${totalFailed}, ` +
+        `delivered=${totals.delivered}, sent=${totals.sent}, undelivered=${totals.undelivered}, ` +
+        `remaining=${totalRemaining}, capReached=${capReached}`
+    );
+
+    res.json({
+      campaign,
+      total: totalUsers,
+      skipped: totalSkipped,
+      submitted: submittedThisRun,
+      failed: totalFailed,
+      remaining: totalRemaining,
+      capReached,
+      maxPerRun,
+      delivered: totals.delivered,
+      sent: totals.sent,
+      undelivered: totals.undelivered,
+      deliveryPending,
+      batches: batchResults.map((b) => ({
+        name: b.name,
+        total: b.total,
+        skipped: b.skipped,
+        submitted: b.submitted,
+        failed: b.failed,
+        remaining: b.remaining,
+        ...countDelivery(b.sids, statuses),
+      })),
+    });
   } catch (error) {
+    logger.error("Broadcast route error:", error);
     res.status(500).json({ error: "Failed to send broadcast" });
   }
 });

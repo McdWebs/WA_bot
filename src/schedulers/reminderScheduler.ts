@@ -4,7 +4,7 @@ import hebcalService from "../services/hebcal";
 import twilioService from "../services/twilio";
 import timezoneService from "../utils/timezone";
 import messageTemplateService from "../utils/messageTemplates";
-import logger from "../utils/logger";
+import logger, { shortPhone } from "../utils/logger";
 import { ReminderSetting, User } from "../types";
 import { config } from "../config";
 import {
@@ -35,7 +35,9 @@ export class ReminderScheduler {
 
     // Run every minute to check for reminders
     cron.schedule("* * * * *", async () => {
-      logger.info(`🧪 TEST MODE: Scheduler running at ${new Date().toISOString()}`);
+      if (config.testMode.enabled) {
+        logger.debug(`Scheduler tick ${new Date().toISOString()}`);
+      }
       await this.checkAndSendReminders();
     });
 
@@ -44,7 +46,7 @@ export class ReminderScheduler {
 
     // TEST MODE: Run immediately on startup for testing
     if (config.testMode.enabled) {
-      logger.info("🧪 TEST MODE: Running initial check immediately...");
+      logger.debug("TEST MODE: running initial check");
       setImmediate(() => {
         this.checkAndSendReminders().catch((err) => {
           logger.error("🧪 TEST MODE: Error in initial check:", err);
@@ -58,32 +60,17 @@ export class ReminderScheduler {
       // Check if it's Saturday (Shabbat) in Israel - don't send any reminders on Shabbat
       const dayOfWeekInIsrael = timezoneService.getDayOfWeekInTimezone(ISRAEL_TZ);
       if (dayOfWeekInIsrael === 6) {
-        logger.info(`Shabbat detected (Saturday in Israel) - skipping all reminder checks`);
+        logger.debug("Shabbat — skipping reminder checks");
         return;
       }
 
-      logger.info(`🧪 TEST MODE: Starting reminder check at ${new Date().toISOString()}`);
-
-      // Get all active reminder settings with user data
       const settings = await mongoService.getAllActiveReminderSettings();
 
-      logger.info(`🧪 TEST MODE: Fetched ${settings.length} active reminder(s) from database`);
-
       if (settings.length === 0) {
-        logger.info("🧪 TEST MODE: No active reminders found - nothing to check");
         return;
       }
 
-      // Log all reminders with test_time for debugging
-      for (const setting of settings) {
-        logger.info(
-          `🧪 TEST MODE: Reminder ${setting.id} (${setting.reminder_type}) - ` +
-          `enabled: ${setting.enabled}, test_time: ${setting.test_time || 'none'}, ` +
-          `user: ${(setting as any).users?.phone_number || 'unknown'}`
-        );
-      }
-
-      logger.debug(`🧪 TEST MODE: Checking ${settings.length} active reminder(s)`);
+      logger.debug(`Checking ${settings.length} active reminder(s)`);
 
       // Group settings by user
       const userSettingsMap = new Map<
@@ -162,8 +149,8 @@ export class ReminderScheduler {
               );
               location = fallback;
               foundValidLocation = true;
-              logger.info(
-                `Using fallback location "${fallback}" for user ${user.phone_number}`
+              logger.debug(
+                `Using fallback location "${fallback}" for ${shortPhone(user.phone_number)}`
               );
 
               // Update user's location in database to fix it for future
@@ -195,17 +182,6 @@ export class ReminderScheduler {
           continue;
         }
 
-        // Log at info when reminder has test_time so it's visible in production logs
-        if (setting.test_time) {
-          logger.info(
-            `🧪 TEST MODE: Checking reminder ${setting.id} (${setting.reminder_type}) for ${user.phone_number}, test_time: ${setting.test_time}`
-          );
-        } else {
-          logger.debug(
-            `🧪 TEST MODE: Checking reminder ${setting.id} (${setting.reminder_type}) for ${user.phone_number}, test_time: ${setting.test_time || 'none'}`
-          );
-        }
-
         const shouldSend = await this.shouldSendReminder(
           setting,
           user,
@@ -214,10 +190,7 @@ export class ReminderScheduler {
         );
 
         if (shouldSend) {
-          logger.info(`🧪 TEST MODE: ✅ Sending reminder ${setting.id} to ${user.phone_number}`);
           await this.sendReminder(user, setting, hebcalData, location);
-        } else {
-          logger.debug(`🧪 TEST MODE: Not sending reminder ${setting.id} - shouldSend=false`);
         }
       }
     } catch (error) {
@@ -439,30 +412,9 @@ export class ReminderScheduler {
         const diffMinutes = Math.abs(currentTimeMinutesUtc - testTimeMinutes);
         const shouldTrigger = diffMinutes <= windowMinutes;
 
-        logger.info(
-          `🧪 TEST MODE: Checking reminder ${setting.id} (test_time=UTC) - ` +
-          `Current UTC: ${String(utcHours).padStart(2, "0")}:${String(utcMinutes).padStart(2, "0")} (${currentTimeMinutesUtc} min), ` +
-          `Test Time: ${setting.test_time} (${testTimeMinutes} min), diff=${diffMinutes}, ` +
-          `Should Trigger: ${shouldTrigger}`
+        logger.debug(
+          `test_time check ${setting.id}: diff=${diffMinutes}m trigger=${shouldTrigger}`
         );
-
-        if (shouldTrigger) {
-          const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
-          const lastSentDate = setting.last_sent_at
-            ? setting.last_sent_at.split("T")[0]
-            : null;
-
-          if (lastSentDate === israelTodayStr) {
-            logger.info(
-              `🧪 TEST MODE: Reminder ${setting.id} already sent today (${lastSentDate}); test_time override: allowing send for testing`
-            );
-          }
-
-          logger.info(
-            `🧪 TEST MODE: ✅ TRIGGERING reminder for ${user.phone_number} - ` +
-            `Test time ${setting.test_time} (UTC) has arrived! Current UTC: ${String(utcHours).padStart(2, "0")}:${String(utcMinutes).padStart(2, "0")}`
-          );
-        }
 
         return shouldTrigger;
       }
@@ -573,16 +525,6 @@ export class ReminderScheduler {
       // This prevents repeated triggers every minute after the time has passed
       const shouldTrigger = currentTimeMinutes === reminderTimeMinutes;
 
-      logger.info(
-        `🧪 TEST MODE: Checking reminder ${setting.id} (calculated) - ` +
-        `Current: ${currentHour}:${String(currentMinute).padStart(2, "0")} (${currentTimeMinutes} min), ` +
-        `Event Time: ${eventTime} (${eventTimeMinutes} min), ` +
-        `Offset: ${setting.time_offset_minutes} min, ` +
-        `Reminder Time: ${Math.floor(reminderTimeMinutes / 60)}:${String(reminderTimeMinutes % 60).padStart(2, "0")} (${reminderTimeMinutes} min), ` +
-        `Time has ${shouldTrigger ? 'PASSED' : 'NOT YET COME'}, ` +
-        `Should Trigger: ${shouldTrigger}`
-      );
-
       if (shouldTrigger) {
         const israelTodayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
         const lastSentDate = setting.last_sent_at
@@ -590,18 +532,9 @@ export class ReminderScheduler {
           : null;
 
         if (lastSentDate === israelTodayStr) {
-          logger.debug(
-            `🧪 TEST MODE: Reminder ${setting.id} already sent today (${lastSentDate}), skipping duplicate send`
-          );
+          logger.debug(`Reminder ${setting.id} already sent today, skipping`);
           return false;
         }
-
-        logger.info(
-          `🧪 TEST MODE: ✅ TRIGGERING reminder for ${user.phone_number} - ` +
-          `Reminder time has arrived! ` +
-          `Current: ${currentHour}:${String(currentMinute).padStart(2, "0")}, ` +
-          `Calculated Reminder: ${Math.floor(reminderTimeMinutes / 60)}:${String(reminderTimeMinutes % 60).padStart(2, "0")}`
-        );
       }
 
       return shouldTrigger;
@@ -618,6 +551,9 @@ export class ReminderScheduler {
     location: string
   ): Promise<void> {
     try {
+      logger.info(
+        `[${shortPhone(user.phone_number)}] reminder ${setting.reminder_type}`
+      );
       const todayStr = timezoneService.getDateInTimezone(ISRAEL_TZ);
       let eventTime: string | null = null;
       let additionalData: Record<string, string> = {};
@@ -640,9 +576,6 @@ export class ReminderScheduler {
             setting.time_offset_minutes
           );
 
-          logger.info(
-            `Sending tefillin reminder template to ${user.phone_number} (sunset=${eventTime}, reminder=${reminderTime})`
-          );
           await twilioService.sendTemplateMessage(
             user.phone_number,
             "tefilinFinalMessage",
@@ -684,9 +617,6 @@ export class ReminderScheduler {
               );
               if (candleTime) {
                 const reminderTime = reminderTimeFromOffset(candleTime);
-                logger.info(
-                  `Sending candle lighting template to ${user.phone_number} for city=${city} (candleTime=${candleTime}, reminder=${reminderTime})`
-                );
                 await twilioService.sendTemplateMessage(
                   user.phone_number,
                   candleFinalKey,
@@ -701,9 +631,6 @@ export class ReminderScheduler {
             );
             if (candleTime) {
               const reminderTime = reminderTimeFromOffset(candleTime);
-              logger.info(
-                `Sending candle lighting template to ${user.phone_number} for city=${user.location} (candleTime=${candleTime}, reminder=${reminderTime})`
-              );
               await twilioService.sendTemplateMessage(
                 user.phone_number,
                 candleFinalKey,
@@ -731,9 +658,6 @@ export class ReminderScheduler {
             setting.time_offset_minutes
           );
 
-          logger.info(
-            `Sending shema reminder template to ${user.phone_number} (shemaTime=${eventTime}, reminder=${reminderTime})`
-          );
           await twilioService.sendTemplateMessage(
             user.phone_number,
             "shemaFinalMessage",
@@ -748,9 +672,6 @@ export class ReminderScheduler {
         case "taara": {
           const sunsetTime =
             (await hebcalService.getSunsetTime(location, todayStr)) || "18:00";
-          logger.info(
-            `Sending taara reminder to ${user.phone_number} (sunset=${sunsetTime})`
-          );
           await twilioService.sendTemplateMessage(
             user.phone_number,
             "taaraFinalMessage",
@@ -768,17 +689,12 @@ export class ReminderScheduler {
 
           if (!isWithinClean7Window(startDate, todayStr)) {
             const dayN = clean7CurrentDayNumber(startDate, todayStr);
-            logger.info(
-              `clean_7 reminder ${setting.id} for ${user.phone_number} is out of range (day=${dayN}), skipping send`
-            );
+            logger.debug(`clean_7 out of range day=${dayN}, skip`);
             return;
           }
 
           const dayToday = clean7CurrentDayNumber(startDate, todayStr);
           const body = buildClean7ReminderText(dayToday);
-          logger.info(
-            `Sending clean_7 reminder to ${user.phone_number} (day ${dayToday}, date=${todayStr})`
-          );
           await twilioService.sendTemplateMessage(
             user.phone_number,
             "clean7FinalMessage",
@@ -792,10 +708,6 @@ export class ReminderScheduler {
           return;
       }
 
-      logger.info(
-        `Reminder sent to ${user.phone_number} for ${setting.reminder_type}`
-      );
-
       // Update last_sent_at to prevent duplicate sends
       if (setting.id) {
         try {
@@ -807,9 +719,7 @@ export class ReminderScheduler {
           // After sending it once, we disable it so it won't fire again on future days.
           if (setting.reminder_type === "taara") {
             (updatePayload as any).enabled = false;
-            logger.info(
-              `Disabled taara reminder ${setting.id} after first send to prevent daily repeats`
-            );
+            logger.debug(`Disabled taara reminder ${setting.id} after send`);
           }
 
           // clean_7 flow should end after day 7; once we've finished the cycle,
@@ -821,9 +731,7 @@ export class ReminderScheduler {
               const idx = clean7DaysSinceStart(startDate, israelTodayStr);
               if (idx >= 6) {
                 (updatePayload as any).enabled = false;
-                logger.info(
-                  `Disabled clean_7 reminder ${setting.id} for ${user.phone_number} after completing 7 days (dayIndex=${idx})`
-                );
+                logger.debug(`Disabled clean_7 reminder ${setting.id} after day 7`);
               }
             }
           }

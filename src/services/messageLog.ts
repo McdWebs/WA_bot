@@ -25,7 +25,7 @@ export async function appendMessageLog(entry: Omit<MessageLogEntry, "direction">
       ...entry,
       direction: "outbound",
     });
-    logger.info(`Message logged: sid=${entry.twilio_sid} to ${entry.phone_number} type=${entry.type}`);
+    logger.debug(`Message log +${entry.twilio_sid} ${entry.type}`);
   } catch (error) {
     logger.error("Message log append error:", error);
   }
