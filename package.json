@@ -4,7 +4,7 @@
   "description": "WhatsApp reminders bot for Hebrew calendar events",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "npx --yes -p typescript@5.9.3 tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "watch": "ts-node-dev --respawn --transpile-only src/index.ts",
