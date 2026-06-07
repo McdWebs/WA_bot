@@ -348,10 +348,12 @@ interface BroadcastBatchProgress {
 }
 
 interface BroadcastProgress {
-  /** idle = never run this process; running = in progress; completed/error = finished */
-  status: "idle" | "running" | "completed" | "error";
+  /** idle = never run this process; running = in progress; completed/cancelled/error = finished */
+  status: "idle" | "running" | "completed" | "cancelled" | "error";
   /** finer-grained step shown in the UI */
-  phase: "idle" | "sending" | "polling" | "done" | "error";
+  phase: "idle" | "sending" | "polling" | "done" | "cancelled" | "error";
+  /** true once a stop was requested but the run hasn't wound down yet */
+  cancelRequested: boolean;
   campaign: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -375,6 +377,7 @@ function freshBroadcastProgress(): BroadcastProgress {
   return {
     status: "idle",
     phase: "idle",
+    cancelRequested: false,
     campaign: config.broadcast.campaign,
     startedAt: null,
     finishedAt: null,
@@ -398,6 +401,8 @@ function freshBroadcastProgress(): BroadcastProgress {
 // In-memory progress for the current/last broadcast run (single Render instance).
 // Dedupe lives in Mongo, so even if this is lost on restart the next run resumes safely.
 let broadcastProgress: BroadcastProgress = freshBroadcastProgress();
+// Set by POST /broadcast/cancel; the running job checks it between sends and stops gracefully.
+let broadcastCancelRequested = false;
 
 /**
  * Runs the full broadcast in the background, updating `broadcastProgress` as it goes
@@ -407,6 +412,7 @@ let broadcastProgress: BroadcastProgress = freshBroadcastProgress();
  */
 async function runBroadcastJob(): Promise<void> {
   const { campaign, delayMs, maxPerRun } = config.broadcast;
+  broadcastCancelRequested = false;
   try {
     await ensureBroadcastIndexes();
 
@@ -460,6 +466,7 @@ async function runBroadcastJob(): Promise<void> {
     const batchSids: string[][] = batchDefs.map(() => []);
     let attempted = 0;
     let capReached = false;
+    let cancelled = false;
 
     for (let bi = 0; bi < batchDefs.length; bi++) {
       const pending = pendingByBatch[bi];
@@ -467,6 +474,10 @@ async function runBroadcastJob(): Promise<void> {
       let processed = 0;
 
       for (let i = 0; i < pending.length; i++) {
+        if (broadcastCancelRequested) {
+          cancelled = true;
+          break;
+        }
         if (maxPerRun > 0 && attempted >= maxPerRun) {
           capReached = true;
           break;
@@ -498,6 +509,10 @@ async function runBroadcastJob(): Promise<void> {
         }
       }
 
+      if (cancelled) {
+        logger.info(`Broadcast cancelled by user after ${attempted} attempt(s)`);
+        break;
+      }
       if (capReached) {
         broadcastProgress.capReached = true;
         logger.info(`Broadcast per-run cap (${maxPerRun}) reached; stopping early`);
@@ -529,13 +544,13 @@ async function runBroadcastJob(): Promise<void> {
     broadcastProgress.sent = totals.sent;
     broadcastProgress.undelivered = totals.undelivered;
     broadcastProgress.deliveryPending = deliveryPending;
-    broadcastProgress.status = "completed";
-    broadcastProgress.phase = "done";
+    broadcastProgress.status = cancelled ? "cancelled" : "completed";
+    broadcastProgress.phase = cancelled ? "cancelled" : "done";
     broadcastProgress.finishedAt = new Date().toISOString();
 
     logger.info(
-      `Broadcast finished: submitted=${broadcastProgress.submitted}, failed=${broadcastProgress.failed}, ` +
-        `delivered=${totals.delivered}, undelivered=${totals.undelivered}, ` +
+      `Broadcast ${cancelled ? "cancelled" : "finished"}: submitted=${broadcastProgress.submitted}, ` +
+        `failed=${broadcastProgress.failed}, delivered=${totals.delivered}, undelivered=${totals.undelivered}, ` +
         `remaining=${broadcastProgress.remaining}, capReached=${broadcastProgress.capReached}`
     );
   } catch (error) {
@@ -560,6 +575,7 @@ router.post("/broadcast", (_req: Request, res: Response) => {
   }
 
   // Seed a "running" snapshot synchronously so an immediate status poll sees it.
+  broadcastCancelRequested = false;
   broadcastProgress = {
     ...freshBroadcastProgress(),
     status: "running",
@@ -582,6 +598,23 @@ router.post("/broadcast", (_req: Request, res: Response) => {
 /** GET /api/dashboard/broadcast/status - Live progress of the current/last broadcast run. */
 router.get("/broadcast/status", (_req: Request, res: Response) => {
   res.json(broadcastProgress);
+});
+
+/**
+ * POST /api/dashboard/broadcast/cancel - Request a graceful stop of the running broadcast.
+ * The background job checks the flag between sends and stops (in-flight delivery polling
+ * still completes for what was already sent). Already-sent users are recorded, so a later
+ * run resumes with the rest. Safe to call even if nothing is running.
+ */
+router.post("/broadcast/cancel", (_req: Request, res: Response) => {
+  if (broadcastProgress.status !== "running") {
+    res.json({ cancelled: false, reason: "no_active_broadcast", progress: broadcastProgress });
+    return;
+  }
+  broadcastCancelRequested = true;
+  broadcastProgress.cancelRequested = true;
+  logger.info("Broadcast cancel requested via dashboard");
+  res.json({ cancelled: true, progress: broadcastProgress });
 });
 
 export default router;

@@ -55,6 +55,21 @@
   cursor: not-allowed;
 }
 
+.broadcast-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.broadcast-btn.stop {
+  background: #dc2626;
+}
+
+.broadcast-btn.stop:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
 .broadcast-results {
   margin-top: 1.25rem;
   display: grid;

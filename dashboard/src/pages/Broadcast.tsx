@@ -15,8 +15,9 @@ interface BroadcastBatch {
 }
 
 interface BroadcastProgress {
-  status: "idle" | "running" | "completed" | "error";
-  phase: "idle" | "sending" | "polling" | "done" | "error";
+  status: "idle" | "running" | "completed" | "cancelled" | "error";
+  phase: "idle" | "sending" | "polling" | "done" | "cancelled" | "error";
+  cancelRequested: boolean;
   campaign: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -52,6 +53,7 @@ const PHASE_LABELS: Record<BroadcastProgress["phase"], string> = {
   sending: "שולח הודעות...",
   polling: "בודק מסירה ב-Twilio...",
   done: "הסתיים",
+  cancelled: "הופסק",
   error: "שגיאה",
 };
 
@@ -59,6 +61,7 @@ export default function Broadcast() {
   const [progress, setProgress] = useState<BroadcastProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const pollRef = useRef<number | null>(null);
 
   const isRunning = progress?.status === "running";
@@ -129,6 +132,24 @@ export default function Broadcast() {
     }
   }
 
+  async function handleStop() {
+    if (!confirm("לעצור את השליחה? מי שכבר נשלח יישמר, ותוכל להמשיך מאוחר יותר.")) {
+      return;
+    }
+    setStopping(true);
+    setError(null);
+    try {
+      const data = await api<{ progress: BroadcastProgress }>("/broadcast/cancel", {
+        method: "POST",
+      });
+      setProgress(data.progress);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setStopping(false);
+    }
+  }
+
   const attempted = progress ? progress.submitted + progress.failed : 0;
   const pct =
     progress && progress.toSend > 0
@@ -149,17 +170,28 @@ export default function Broadcast() {
           שוב מחר כדי להשלים את מי שנכשל/נחסם). השליחה מפוזרת (~2 שניות בין הודעות)
           כדי למנוע שגיאת rate limit ב-Twilio.
         </p>
-        <button
-          className="broadcast-btn"
-          onClick={handleSend}
-          disabled={starting || isRunning}
-        >
-          {isRunning
-            ? "השליחה רצה ברקע..."
-            : starting
-            ? "מתחיל..."
-            : "שלח לכולם (2 מנות)"}
-        </button>
+        <div className="broadcast-actions">
+          <button
+            className="broadcast-btn"
+            onClick={handleSend}
+            disabled={starting || isRunning}
+          >
+            {isRunning
+              ? "השליחה רצה ברקע..."
+              : starting
+              ? "מתחיל..."
+              : "שלח לכולם (2 מנות)"}
+          </button>
+          {isRunning && (
+            <button
+              className="broadcast-btn stop"
+              onClick={handleStop}
+              disabled={stopping || progress?.cancelRequested}
+            >
+              {stopping || progress?.cancelRequested ? "עוצר..." : "⛔ עצור שליחה"}
+            </button>
+          )}
+        </div>
       </div>
 
       {progress && progress.status !== "idle" && (
@@ -169,7 +201,9 @@ export default function Broadcast() {
             <div className="broadcast-progress-head">
               <span className={`broadcast-phase ${progress.status}`}>
                 {isRunning && <span className="broadcast-spinner" />}
-                {PHASE_LABELS[progress.phase]}
+                {isRunning && progress.cancelRequested
+                  ? "עוצר..."
+                  : PHASE_LABELS[progress.phase]}
               </span>
               <span className="broadcast-progress-count">
                 {attempted} / {progress.toSend} נשלחו
@@ -222,6 +256,12 @@ export default function Broadcast() {
           {progress.status === "error" && (
             <p className="broadcast-pending-note error-note">
               השליחה נכשלה: {progress.error}
+            </p>
+          )}
+          {progress.status === "cancelled" && (
+            <p className="broadcast-pending-note">
+              השליחה הופסקה. {progress.submitted} נשלחו ונשמרו. הרץ שוב כדי להמשיך
+              מהמקום שבו נעצרת (מי שכבר קיבל יידלג).
             </p>
           )}
           {progress.status === "completed" && progress.capReached && (
