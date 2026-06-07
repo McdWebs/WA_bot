@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import cors from "cors";
 import { config } from "./config";
 import messageHandler from "./bot/messageHandler";
 import reminderScheduler from "./schedulers/reminderScheduler";
@@ -16,53 +15,20 @@ import { clearUsageRangeCache } from "./services/twilioUsage";
 
 const app = express();
 
-// CORS for dashboard API: local dev + DASHBOARD_ORIGIN (Vercel etc.)
-const LOCAL_DEV_ORIGINS = [
-  "http://localhost:4173",
-  "http://localhost:5173",
-  "http://localhost:5175",
-  "http://127.0.0.1:4173",
-  "http://127.0.0.1:5173",
-  "http://127.0.0.1:5175",
-];
-const allowedOrigins = new Set([
-  ...LOCAL_DEV_ORIGINS,
-  ...(config.dashboard.origin || "")
-    .split(",")
-    .map((o) => o.trim().replace(/\/$/, ""))
-    .filter(Boolean),
-]);
-
-// Explicit preflight (OPTIONS) handler so PATCH and other methods are always allowed
+// CORS for dashboard API: fully open. Reflect any origin so the Vercel dashboard
+// (and local dev) are always allowed. NOTE: this does NOT affect 502s — those come
+// from Render's proxy when the app is down and never carry CORS headers regardless.
 app.use("/api/dashboard", (req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS, PATCH, POST, PUT, DELETE");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key");
+  res.setHeader("Access-Control-Max-Age", "86400");
   if (req.method === "OPTIONS") {
-    const origin = req.headers.origin;
-    if (origin && (allowedOrigins.has(origin) || allowedOrigins.has(origin.replace(/\/$/, "")))) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-    }
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS, PATCH, POST, PUT, DELETE");
-    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key");
-    res.setHeader("Access-Control-Max-Age", "86400");
     return res.status(204).end();
   }
   next();
 });
-
-app.use(
-  "/api/dashboard",
-  cors({
-    origin: (origin, cb) => {
-      if (origin == null || allowedOrigins.has(origin) || allowedOrigins.has(origin.replace(/\/$/, ""))) {
-        cb(null, true);
-      } else {
-        cb(null, false);
-      }
-    },
-    methods: ["GET", "OPTIONS", "PATCH", "POST", "PUT", "DELETE"],
-    allowedHeaders: ["Authorization", "Content-Type", "X-API-Key"],
-    maxAge: 86400,
-  })
-);
 
 // Middleware
 app.use(express.urlencoded({ extended: true }));
