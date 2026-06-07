@@ -2,7 +2,7 @@ services:
   - type: web
     name: whatsapp-reminders-bot
     env: node
-    buildCommand: npm install && npm run build
+    buildCommand: npm install && npm run build && cd dashboard && npm install && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
@@ -27,4 +27,6 @@ services:
         value: Asia/Jerusalem
       - key: LOG_LEVEL
         value: info
+      - key: DASHBOARD_API_KEY
+        sync: false
 
