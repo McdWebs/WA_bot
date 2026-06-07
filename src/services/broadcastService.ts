@@ -46,14 +46,40 @@ export async function ensureBroadcastIndexes(): Promise<void> {
   }
 }
 
-/** Phone numbers that have already received this campaign successfully. */
+/**
+ * Phone numbers that should NOT be sent the broadcast again because they already
+ * received it successfully. Unions two sources:
+ *   1) broadcast_recipients for this campaign (the new per-campaign tracker), and
+ *   2) message_log entries with template_key "broadcast" and a healthy status —
+ *      this covers sends made by earlier broadcast runs (before per-campaign
+ *      tracking existed), so the very first run won't re-message people who
+ *      already got it.
+ * Undelivered/failed recipients are intentionally excluded so they get retried.
+ *
+ * Note: source (2) is keyed on the broadcast template, not on `campaign`, so if you
+ * deliberately start a fresh campaign (BROADCAST_CAMPAIGN) reusing the same template,
+ * prior recipients will still be skipped. Use a new template for a true re-send.
+ */
 export async function getAlreadySentPhones(campaign: string): Promise<Set<string>> {
-  const col = await getCollection();
-  const docs = await col
-    .find({ campaign, status: { $in: HEALTHY_STATUSES } })
-    .project({ phone_number: 1 })
-    .toArray();
-  return new Set(docs.map((d: any) => d.phone_number as string));
+  const db = await getDb();
+  const recipients = db.collection("broadcast_recipients");
+  const messageLog = db.collection("message_log");
+
+  const [recipientDocs, logDocs] = await Promise.all([
+    recipients
+      .find({ campaign, status: { $in: HEALTHY_STATUSES } })
+      .project({ phone_number: 1 })
+      .toArray(),
+    messageLog
+      .find({ template_key: "broadcast", status: { $in: HEALTHY_STATUSES } })
+      .project({ phone_number: 1 })
+      .toArray(),
+  ]);
+
+  const phones = new Set<string>();
+  for (const d of recipientDocs as any[]) phones.add(d.phone_number);
+  for (const d of logDocs as any[]) phones.add(d.phone_number);
+  return phones;
 }
 
 /** Record (or update) a recipient after a submit attempt. */

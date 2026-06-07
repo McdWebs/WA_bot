@@ -206,3 +206,84 @@
   border-color: #9333ea;
   color: #d8b4fe;
 }
+
+.broadcast-progress {
+  grid-column: 1 / -1;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.broadcast-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.broadcast-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  color: #93c5fd;
+}
+
+.broadcast-phase.completed {
+  color: #4ade80;
+}
+
+.broadcast-phase.error {
+  color: #f87171;
+}
+
+.broadcast-progress-count {
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
+}
+
+.broadcast-progress-bar {
+  width: 100%;
+  height: 10px;
+  background: #0f172a;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.broadcast-progress-fill {
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.broadcast-progress-fill.completed {
+  background: #16a34a;
+}
+
+.broadcast-progress-fill.error {
+  background: #dc2626;
+}
+
+.broadcast-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #93c5fd66;
+  border-top-color: #93c5fd;
+  border-radius: 50%;
+  animation: broadcast-spin 0.8s linear infinite;
+}
+
+@keyframes broadcast-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.broadcast-pending-note.error-note {
+  color: #f87171;
+}

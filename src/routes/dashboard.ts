@@ -335,90 +335,162 @@ function countDelivery(
   return counts;
 }
 
-interface BroadcastBatchDef {
-  name: string;
-  users: { phone_number: string }[];
-}
-
-interface BroadcastBatchResult {
+interface BroadcastBatchProgress {
   name: string;
   total: number;
   skipped: number;
   submitted: number;
   failed: number;
   remaining: number;
-  sids: string[];
+  delivered: number;
+  sent: number;
+  undelivered: number;
 }
 
+interface BroadcastProgress {
+  /** idle = never run this process; running = in progress; completed/error = finished */
+  status: "idle" | "running" | "completed" | "error";
+  /** finer-grained step shown in the UI */
+  phase: "idle" | "sending" | "polling" | "done" | "error";
+  campaign: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  total: number; // all users in scope
+  skipped: number; // already delivered in a previous run
+  toSend: number; // how many this run will attempt (after dedupe + cap)
+  submitted: number;
+  failed: number;
+  remaining: number; // pending users NOT attempted this run (cap overflow) -> need another run
+  capReached: boolean;
+  maxPerRun: number;
+  delivered: number;
+  sent: number;
+  undelivered: number;
+  deliveryPending: boolean;
+  batches: BroadcastBatchProgress[];
+  error: string | null;
+}
+
+function freshBroadcastProgress(): BroadcastProgress {
+  return {
+    status: "idle",
+    phase: "idle",
+    campaign: config.broadcast.campaign,
+    startedAt: null,
+    finishedAt: null,
+    total: 0,
+    skipped: 0,
+    toSend: 0,
+    submitted: 0,
+    failed: 0,
+    remaining: 0,
+    capReached: false,
+    maxPerRun: config.broadcast.maxPerRun,
+    delivered: 0,
+    sent: 0,
+    undelivered: 0,
+    deliveryPending: false,
+    batches: [],
+    error: null,
+  };
+}
+
+// In-memory progress for the current/last broadcast run (single Render instance).
+// Dedupe lives in Mongo, so even if this is lost on restart the next run resumes safely.
+let broadcastProgress: BroadcastProgress = freshBroadcastProgress();
+
 /**
- * POST /api/dashboard/broadcast - Send the campaign template to users in two batches:
- *   1) users with at least one reminder, then 2) everyone else.
- * Already-delivered users are skipped (dedupe/resume), and an optional per-run cap
- * (BROADCAST_MAX_PER_RUN) stops once the WhatsApp 24h tier limit is reached so the
- * overflow is left for the next run instead of going undelivered.
+ * Runs the full broadcast in the background, updating `broadcastProgress` as it goes
+ * so GET /broadcast/status can report live progress. Sends in two batches
+ * (users with reminders first, then everyone else), skipping already-delivered users
+ * and honoring the per-run cap (BROADCAST_MAX_PER_RUN).
  */
-router.post("/broadcast", async (_req: Request, res: Response) => {
+async function runBroadcastJob(): Promise<void> {
+  const { campaign, delayMs, maxPerRun } = config.broadcast;
   try {
     await ensureBroadcastIndexes();
 
-    const { campaign, delayMs, maxPerRun } = config.broadcast;
     const { withReminders, withoutReminders } =
       await mongoService.getUsersForBroadcast();
     const alreadySent = await getAlreadySentPhones(campaign);
 
-    const batches: BroadcastBatchDef[] = [
+    const batchDefs = [
       { name: "with_reminders", users: withReminders },
       { name: "without_reminders", users: withoutReminders },
     ];
-
-    const totalUsers = withReminders.length + withoutReminders.length;
-    logger.info(
-      `Starting broadcast campaign="${campaign}" total=${totalUsers} ` +
-        `withReminders=${withReminders.length} withoutReminders=${withoutReminders.length} ` +
-        `alreadySent=${alreadySent.size} maxPerRun=${maxPerRun || "∞"}`
+    const pendingByBatch = batchDefs.map((b) =>
+      b.users.filter((u) => !alreadySent.has(u.phone_number))
     );
 
-    const batchResults: BroadcastBatchResult[] = [];
+    const totalUsers = withReminders.length + withoutReminders.length;
+    const pendingTotal = pendingByBatch.reduce((n, p) => n + p.length, 0);
+    const toSend = maxPerRun > 0 ? Math.min(pendingTotal, maxPerRun) : pendingTotal;
+
+    broadcastProgress = {
+      ...freshBroadcastProgress(),
+      status: "running",
+      phase: "sending",
+      campaign,
+      startedAt: new Date().toISOString(),
+      total: totalUsers,
+      skipped: totalUsers - pendingTotal,
+      toSend,
+      remaining: pendingTotal,
+      maxPerRun,
+      batches: batchDefs.map((b, i) => ({
+        name: b.name,
+        total: b.users.length,
+        skipped: b.users.length - pendingByBatch[i].length,
+        submitted: 0,
+        failed: 0,
+        remaining: pendingByBatch[i].length,
+        delivered: 0,
+        sent: 0,
+        undelivered: 0,
+      })),
+    };
+
+    logger.info(
+      `Starting broadcast campaign="${campaign}" total=${totalUsers} ` +
+        `pending=${pendingTotal} skipped=${broadcastProgress.skipped} ` +
+        `toSend=${toSend} maxPerRun=${maxPerRun || "∞"}`
+    );
+
     const allSids: string[] = [];
-    let submittedThisRun = 0;
+    const batchSids: string[][] = batchDefs.map(() => []);
+    let attempted = 0;
     let capReached = false;
 
-    for (const batch of batches) {
-      const pending = batch.users.filter((u) => !alreadySent.has(u.phone_number));
-      const skipped = batch.users.length - pending.length;
-      let submitted = 0;
-      let failed = 0;
+    for (let bi = 0; bi < batchDefs.length; bi++) {
+      const pending = pendingByBatch[bi];
+      const bp = broadcastProgress.batches[bi];
       let processed = 0;
-      const sids: string[] = [];
-
-      logger.info(
-        `Broadcast batch="${batch.name}" total=${batch.users.length} ` +
-          `pending=${pending.length} skipped=${skipped}`
-      );
 
       for (let i = 0; i < pending.length; i++) {
-        if (maxPerRun > 0 && submittedThisRun >= maxPerRun) {
+        if (maxPerRun > 0 && attempted >= maxPerRun) {
           capReached = true;
           break;
         }
 
         const user = pending[i];
         processed++;
+        attempted++;
         try {
           const sid = await sendBroadcastTemplate(user.phone_number);
-          sids.push(sid);
+          batchSids[bi].push(sid);
           allSids.push(sid);
-          submitted++;
-          submittedThisRun++;
-          await recordBroadcastSend(campaign, user.phone_number, batch.name, sid, "queued");
-          if (submittedThisRun % 25 === 0) {
-            logger.info(`Broadcast progress ${submittedThisRun} submitted this run`);
-          }
+          bp.submitted++;
+          broadcastProgress.submitted++;
+          await recordBroadcastSend(campaign, user.phone_number, batchDefs[bi].name, sid, "queued");
         } catch (error) {
-          failed++;
-          await recordBroadcastSend(campaign, user.phone_number, batch.name, undefined, "failed");
+          bp.failed++;
+          broadcastProgress.failed++;
+          await recordBroadcastSend(campaign, user.phone_number, batchDefs[bi].name, undefined, "failed");
           logger.error(`Broadcast failed for ${user.phone_number}:`, error);
         }
+
+        bp.remaining = pending.length - processed;
+        broadcastProgress.remaining = pendingTotal - attempted;
 
         const moreInBatch = i < pending.length - 1;
         if (moreInBatch && delayMs > 0) {
@@ -426,39 +498,17 @@ router.post("/broadcast", async (_req: Request, res: Response) => {
         }
       }
 
-      batchResults.push({
-        name: batch.name,
-        total: batch.users.length,
-        skipped,
-        submitted,
-        failed,
-        remaining: pending.length - processed,
-        sids,
-      });
-
       if (capReached) {
+        broadcastProgress.capReached = true;
         logger.info(`Broadcast per-run cap (${maxPerRun}) reached; stopping early`);
         break;
       }
     }
 
-    // Account for batches not started at all because the cap was hit earlier.
-    while (batchResults.length < batches.length) {
-      const batch = batches[batchResults.length];
-      const pending = batch.users.filter((u) => !alreadySent.has(u.phone_number));
-      batchResults.push({
-        name: batch.name,
-        total: batch.users.length,
-        skipped: batch.users.length - pending.length,
-        submitted: 0,
-        failed: 0,
-        remaining: pending.length,
-        sids: [],
-      });
-    }
-
+    broadcastProgress.phase = "polling";
     logger.info(
-      `Broadcast submits finished: submitted=${submittedThisRun}, polling delivery for ${allSids.length} message(s)`
+      `Broadcast submits done: submitted=${broadcastProgress.submitted}, ` +
+        `failed=${broadcastProgress.failed}, polling delivery for ${allSids.length} message(s)`
     );
 
     const { statuses, deliveryPending } = await pollBroadcastDeliveryStatuses(
@@ -466,44 +516,72 @@ router.post("/broadcast", async (_req: Request, res: Response) => {
       allSids
     );
 
+    for (let bi = 0; bi < batchDefs.length; bi++) {
+      const counts = countDelivery(batchSids[bi], statuses);
+      const bp = broadcastProgress.batches[bi];
+      bp.delivered = counts.delivered;
+      bp.sent = counts.sent;
+      bp.undelivered = counts.undelivered;
+    }
+
     const totals = countDelivery(allSids, statuses);
-    const totalSkipped = batchResults.reduce((n, b) => n + b.skipped, 0);
-    const totalFailed = batchResults.reduce((n, b) => n + b.failed, 0);
-    const totalRemaining = batchResults.reduce((n, b) => n + b.remaining, 0);
+    broadcastProgress.delivered = totals.delivered;
+    broadcastProgress.sent = totals.sent;
+    broadcastProgress.undelivered = totals.undelivered;
+    broadcastProgress.deliveryPending = deliveryPending;
+    broadcastProgress.status = "completed";
+    broadcastProgress.phase = "done";
+    broadcastProgress.finishedAt = new Date().toISOString();
 
     logger.info(
-      `Broadcast finished: submitted=${submittedThisRun}, failed=${totalFailed}, ` +
-        `delivered=${totals.delivered}, sent=${totals.sent}, undelivered=${totals.undelivered}, ` +
-        `remaining=${totalRemaining}, capReached=${capReached}`
+      `Broadcast finished: submitted=${broadcastProgress.submitted}, failed=${broadcastProgress.failed}, ` +
+        `delivered=${totals.delivered}, undelivered=${totals.undelivered}, ` +
+        `remaining=${broadcastProgress.remaining}, capReached=${broadcastProgress.capReached}`
     );
-
-    res.json({
-      campaign,
-      total: totalUsers,
-      skipped: totalSkipped,
-      submitted: submittedThisRun,
-      failed: totalFailed,
-      remaining: totalRemaining,
-      capReached,
-      maxPerRun,
-      delivered: totals.delivered,
-      sent: totals.sent,
-      undelivered: totals.undelivered,
-      deliveryPending,
-      batches: batchResults.map((b) => ({
-        name: b.name,
-        total: b.total,
-        skipped: b.skipped,
-        submitted: b.submitted,
-        failed: b.failed,
-        remaining: b.remaining,
-        ...countDelivery(b.sids, statuses),
-      })),
-    });
   } catch (error) {
-    logger.error("Broadcast route error:", error);
-    res.status(500).json({ error: "Failed to send broadcast" });
+    broadcastProgress.status = "error";
+    broadcastProgress.phase = "error";
+    broadcastProgress.error = (error as Error)?.message || String(error);
+    broadcastProgress.finishedAt = new Date().toISOString();
+    logger.error("Broadcast job error:", error);
   }
+}
+
+/**
+ * POST /api/dashboard/broadcast - Start the broadcast in the BACKGROUND and return
+ * immediately (the send + delivery polling can take many minutes, which would
+ * otherwise time out the HTTP request behind a proxy). Poll GET /broadcast/status
+ * for live progress. If a run is already in progress, returns the current progress.
+ */
+router.post("/broadcast", (_req: Request, res: Response) => {
+  if (broadcastProgress.status === "running") {
+    res.status(202).json({ started: false, alreadyRunning: true, progress: broadcastProgress });
+    return;
+  }
+
+  // Seed a "running" snapshot synchronously so an immediate status poll sees it.
+  broadcastProgress = {
+    ...freshBroadcastProgress(),
+    status: "running",
+    phase: "sending",
+    startedAt: new Date().toISOString(),
+  };
+
+  setImmediate(() => {
+    runBroadcastJob().catch((error) => {
+      broadcastProgress.status = "error";
+      broadcastProgress.phase = "error";
+      broadcastProgress.error = (error as Error)?.message || String(error);
+      logger.error("Unhandled broadcast job error:", error);
+    });
+  });
+
+  res.status(202).json({ started: true, progress: broadcastProgress });
+});
+
+/** GET /api/dashboard/broadcast/status - Live progress of the current/last broadcast run. */
+router.get("/broadcast/status", (_req: Request, res: Response) => {
+  res.json(broadcastProgress);
 });
 
 export default router;
