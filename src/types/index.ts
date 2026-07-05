@@ -93,3 +93,26 @@ export interface MessageTemplate {
   content: string;
   reminder_type: ReminderType;
 }
+
+/**
+ * A Hidabroot tefillin station (lookup-only; not tied to a user or reminder).
+ * Stored in the `tefillin_stations` collection. `location` is a GeoJSON Point
+ * ([longitude, latitude]) backed by a 2dsphere index for $geoNear queries.
+ */
+export interface TefillinStation {
+  id?: string;
+  name: string;
+  /** Full human-readable address, e.g. "המייסדים 85, עזריה" */
+  address: string;
+  street?: string;
+  street_number?: string;
+  city: string;
+  contact_name?: string;
+  phone?: string;
+  latitude: number;
+  longitude: number;
+  location: { type: "Point"; coordinates: [number, number] };
+  source?: string;
+  created_at?: string;
+  updated_at?: string;
+}

@@ -1,6 +1,6 @@
 import dns from "dns";
 import { MongoClient, Db, Collection, ObjectId, MongoClientOptions } from "mongodb";
-import { User, ReminderSetting } from "../types";
+import { User, ReminderSetting, TefillinStation } from "../types";
 import logger from "../utils/logger";
 
 // Prefer IPv4 to avoid querySrv ETIMEOUT / secureConnect timeout on some networks
@@ -130,6 +130,11 @@ async function getReminderPreferencesCollection(): Promise<
   return database.collection<
     ReminderSetting & { user_phone_number?: string; enabled?: boolean }
   >("reminder_preferences");
+}
+
+async function getTefillinStationsCollection(): Promise<Collection<TefillinStation>> {
+  const database = await getDb();
+  return database.collection<TefillinStation>("tefillin_stations");
 }
 
 export class MongoService {
@@ -998,6 +1003,91 @@ export class MongoService {
         logger.error("Error deleting reminder setting (Mongo):", error);
         throw error;
       }
+    });
+  }
+
+  // ---- Tefillin stations (lookup-only) ----
+
+  /**
+   * Ensures indexes for tefillin_stations: a 2dsphere index on `location`
+   * (for $geoNear) and a unique index on (name, address) for idempotent upserts.
+   * Called by the import script before loading data.
+   */
+  async ensureTefillinStationsIndexes(): Promise<void> {
+    return withMongoRetry(async () => {
+      const col = await getTefillinStationsCollection();
+      await col.createIndex({ location: "2dsphere" });
+      await col.createIndex({ name: 1, address: 1 }, { unique: true });
+    });
+  }
+
+  /**
+   * Idempotent upsert of a station keyed by (name, address). Re-running the
+   * import updates coordinates/contact rather than creating duplicates.
+   */
+  async upsertTefillinStation(
+    station: Omit<TefillinStation, "id" | "created_at" | "updated_at">
+  ): Promise<void> {
+    return withMongoRetry(async () => {
+      const col = await getTefillinStationsCollection();
+      const now = new Date().toISOString();
+      await col.updateOne(
+        { name: station.name, address: station.address },
+        { $set: { ...station, updated_at: now }, $setOnInsert: { created_at: now } },
+        { upsert: true }
+      );
+    });
+  }
+
+  async countTefillinStations(): Promise<number> {
+    return withMongoRetry(async () => {
+      const col = await getTefillinStationsCollection();
+      return col.countDocuments();
+    });
+  }
+
+  /**
+   * Deletes stations not touched since `sinceIso` (i.e. not refreshed by the
+   * current import run). Used to prune rows that were removed/renamed in the
+   * source file so a re-import yields a clean replacement. Returns count removed.
+   */
+  async deleteStaleTefillinStations(sinceIso: string): Promise<number> {
+    return withMongoRetry(async () => {
+      const col = await getTefillinStationsCollection();
+      const res = await col.deleteMany({ updated_at: { $lt: sinceIso } });
+      return res.deletedCount ?? 0;
+    });
+  }
+
+  /**
+   * Returns the `limit` nearest stations to (latitude, longitude), sorted by
+   * distance ascending, each annotated with `distance_km`. Requires the
+   * 2dsphere index created by ensureTefillinStationsIndexes().
+   */
+  async findNearestTefillinStations(
+    latitude: number,
+    longitude: number,
+    limit = 8
+  ): Promise<(TefillinStation & { distance_km: number })[]> {
+    return withMongoRetry(async () => {
+      const col = await getTefillinStationsCollection();
+      const result = await col
+        .aggregate([
+          {
+            $geoNear: {
+              near: { type: "Point", coordinates: [longitude, latitude] },
+              distanceField: "distance_m",
+              spherical: true,
+            },
+          },
+          { $limit: limit },
+        ])
+        .toArray();
+      return result.map((d: any) => ({
+        ...d,
+        id: d.id || d._id?.toString(),
+        distance_km: (d.distance_m ?? 0) / 1000,
+      }));
     });
   }
 }

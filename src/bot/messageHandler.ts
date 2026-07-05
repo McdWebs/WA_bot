@@ -2,6 +2,7 @@ import { isButtonClick as isButtonClickUtil } from "./messageHandler/pure/isButt
 import { incomingMessageFlow } from "./messageHandler/incomingMessageFlow";
 import { interactiveButtonFlow } from "./messageHandler/interactiveButtonFlow";
 import { incomingLocationFlow } from "./messageHandler/incomingLocationFlow";
+import { tefillinStationsLocationFlow } from "./messageHandler/tefillinStationsLocationFlow";
 import { sendMainMenu } from "./messageHandler/menus";
 import { createMessageHandlerState } from "./messageHandler/state";
 import type { Gender } from "../types";
@@ -45,6 +46,16 @@ export class MessageHandler {
     latitude: number,
     longitude: number
   ): Promise<boolean> {
+    // Tefillin stations lookup takes precedence over the reminder custom-location flow.
+    const handledByStations = await tefillinStationsLocationFlow(
+      this.state,
+      phoneNumber,
+      latitude,
+      longitude
+    );
+    if (handledByStations) {
+      return true;
+    }
     return incomingLocationFlow(this.state, phoneNumber, latitude, longitude);
   }
 }

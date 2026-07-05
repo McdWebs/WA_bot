@@ -8,6 +8,7 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "watch": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "import:tefillin-stations": "ts-node scripts/import-tefillin-stations.ts",
     "test:send": "ts-node test-send-message.ts",
     "test:reminder-now": "ts-node test-reminder-now.ts",
     "test:template-details": "ts-node test-template-details.ts",
@@ -29,7 +30,8 @@
     "mongodb": "^7.0.0",
     "node-cron": "^3.0.3",
     "twilio": "^4.20.0",
-    "winston": "^3.11.0"
+    "winston": "^3.11.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

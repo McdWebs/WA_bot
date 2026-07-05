@@ -4,7 +4,12 @@ import logger from "../../utils/logger";
 import type { Gender } from "../../types";
 
 /**
- * Sends main menu template based on user gender
+ * Sends main menu template based on user gender.
+ *
+ * NOTE (Twilio Console / admin task): the `mainMenu` and `womanMenu` Quick Reply
+ * templates must include a button "📍 עמדות תפילין" whose payload is
+ * `tefillin_stations` so users can reach the tefillin stations finder. The
+ * free-form fallback below already lists this option.
  */
 export async function sendMainMenu(
   phoneNumber: string,
@@ -46,6 +51,8 @@ export async function sendMainMenu(
       } else {
         menuText += "1. הנחת תפילין\n2. הדלקת נרות שבת\n3. זמן קריאת שמע";
       }
+
+      menuText += "\n\n📍 *עמדות תפילין* - לאיתור עמדה קרובה אליך";
 
       await twilioService.sendMessage(phoneNumber, menuText);
       logger.debug(`Fallback menu sent to ${phoneNumber}`);

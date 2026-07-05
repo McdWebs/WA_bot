@@ -86,6 +86,18 @@ export async function interactiveButtonFlow(
       `📋 Current creatingReminderType for ${phoneNumber}: "${creatingReminderTypeForLog}"`
     );
 
+    // Tefillin stations finder — available for all genders, separate from the
+    // tefillin *reminder* flow. Twilio button payload should be `tefillin_stations`;
+    // we also accept Hebrew label variants ("📍 עמדות תפילין").
+    const isTefillinStationsSelection =
+      normalizedButton === "tefillin_stations" ||
+      normalizedButton === "tefilin_stations" ||
+      cleanButton === "tefillin_stations" ||
+      cleanButton === "tefilin_stations" ||
+      (normalizedButton.includes("station") &&
+        (normalizedButton.includes("tefil") || normalizedButton.includes("tfil"))) ||
+      (normalizedButton.includes("עמד") && normalizedButton.includes("תפיל"));
+
     // Check if this is a gender selection (from gender question template)
     // Single, clear IDs per option
     const isGenderSelection =
@@ -177,7 +189,16 @@ export async function interactiveButtonFlow(
     const taaraTimeMatch = normalizedButton.match(/(\d{1,2}:\d{2})/);
     const isTaaraTimeSelection = !!taaraTimeMatch;
 
-    if (isGenderSelection) {
+    if (isTefillinStationsSelection) {
+      // Start the stations lookup: ask for a location pin. Do NOT touch
+      // creatingReminderType / awaitingCustomLocation — this is a separate flow.
+      logger.debug(`📍 Tefillin stations finder started for ${phoneNumber}`);
+      state.awaitingTefillinStationsLocation.add(phoneNumber);
+      await twilioService.sendMessage(
+        phoneNumber,
+        "📍 שלח/י את המיקום הנוכחי שלך (📎 ← מיקום) ואמצא עבורך את עמדות התפילין הקרובות אליך."
+      );
+    } else if (isGenderSelection) {
       // User selected gender - save it and show main menu
       let gender: Gender = "prefer_not_to_say";
       if (normalizedButton === "male") {

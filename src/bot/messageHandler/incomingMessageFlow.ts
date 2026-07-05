@@ -191,6 +191,26 @@ export async function incomingMessageFlow(
       return "";
     }
 
+    // User tapped "📍 עמדות תפילין" — expect a WhatsApp location pin (see handleIncomingLocation)
+    if (state.awaitingTefillinStationsLocation.has(phoneNumber)) {
+      if (
+        normalizedMessage.includes("ביטול") ||
+        normalizedMessage.includes("cancel")
+      ) {
+        state.awaitingTefillinStationsLocation.delete(phoneNumber);
+        await twilioService.sendMessage(
+          phoneNumber,
+          "חיפוש עמדות התפילין בוטל."
+        );
+        return "";
+      }
+      await twilioService.sendMessage(
+        phoneNumber,
+        "📍 נא לשלוח *מיקום* דרך ווטסאפ (📎 ← *מיקום*) כדי שאמצא עבורך עמדות תפילין קרובות."
+      );
+      return "";
+    }
+
     // User chose "custom location" — expect WhatsApp shared location pin (see handleIncomingLocation)
     if (state.awaitingCustomLocation.has(phoneNumber)) {
       if (
@@ -286,6 +306,23 @@ export async function incomingMessageFlow(
           return "";
         }
       }
+    }
+
+    // Tefillin stations finder (text) — MUST be checked before the "תפילין" reminder
+    // intent below, since "עמדות תפילין" also contains "תפילין".
+    if (
+      originalMessage.includes("עמדות תפילין") ||
+      normalizedMessage.includes("tefillin stations") ||
+      normalizedMessage.includes("tefillin_stations") ||
+      (originalMessage.includes("עמד") && originalMessage.includes("תפיל"))
+    ) {
+      logger.debug(`📍 Text command matched: "עמדות תפילין" for ${phoneNumber}`);
+      state.awaitingTefillinStationsLocation.add(phoneNumber);
+      await twilioService.sendMessage(
+        phoneNumber,
+        "📍 שלח/י את המיקום הנוכחי שלך (📎 ← מיקום) ואמצא עבורך את עמדות התפילין הקרובות אליך."
+      );
+      return "";
     }
 
     // Check for text-based reminder type selection (check both normalized and original)
