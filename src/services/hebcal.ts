@@ -10,7 +10,7 @@ import logger from "../utils/logger";
 
 export class HebcalService {
   private cache: Map<string, { data: any; timestamp: number }> = new Map();
-  private readonly CACHE_TTL = 60 * 60 * 1000; // 1 hour
+  private readonly CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
   /**
    * Stored user.location from WhatsApp shared pin: "geo:lat,lng" (6 dp).
@@ -142,13 +142,21 @@ export class HebcalService {
   async getZmanimData(
     latitude: number,
     longitude: number,
-    date?: string
+    date?: string,
+    tzid?: string
   ): Promise<ZmanimResponse | null> {
+    const cacheKey = `zmanim_${latitude}_${longitude}_${date || "today"}_${tzid || "Asia/Jerusalem"}`;
+    const cached = this.getCached(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     try {
       const params: any = {
         cfg: "json",
         latitude: latitude.toString(),
         longitude: longitude.toString(),
+        tzid: tzid || "Asia/Jerusalem",
       };
 
       if (date) {
@@ -168,6 +176,7 @@ export class HebcalService {
           date || "today"
         }`
       );
+      this.setCache(cacheKey, response.data);
       return response.data;
     } catch (error) {
       logger.error("Error fetching Zmanim data:", error);
@@ -189,14 +198,17 @@ export class HebcalService {
         date
       );
 
+      const hebcalData = await this.getHebcalData(normalizedLocation, date);
+      const tzid = hebcalData?.location?.tzid || "Asia/Jerusalem";
+
       const today = date ? new Date(date) : new Date();
       const todayStr = today.toISOString().split("T")[0];
 
       // Try to get sunset from Zmanim API (most accurate)
       logger.debug(
-        `Getting sunset from Zmanim API for ${location} (lat: ${latitude}, lon: ${longitude})`
+        `Getting sunset from Zmanim API for ${location} (lat: ${latitude}, lon: ${longitude}, tzid: ${tzid})`
       );
-      const zmanimData = await this.getZmanimData(latitude, longitude, date);
+      const zmanimData = await this.getZmanimData(latitude, longitude, date, tzid);
 
       if (zmanimData?.times?.sunset) {
         // Parse ISO format: "2025-12-09T16:35:00+02:00" -> "16:35"
@@ -461,7 +473,10 @@ export class HebcalService {
         date
       );
 
-      const zmanimData = await this.getZmanimData(latitude, longitude, date);
+      const hebcalData = await this.getHebcalData(location, date);
+      const tzid = hebcalData?.location?.tzid || "Asia/Jerusalem";
+
+      const zmanimData = await this.getZmanimData(latitude, longitude, date, tzid);
 
       if (zmanimData?.times) {
         // Try misheyakir first (time when it's light enough to see), then sunrise
@@ -506,7 +521,10 @@ export class HebcalService {
         date
       );
 
-      const zmanimData = await this.getZmanimData(latitude, longitude, date);
+      const hebcalData = await this.getHebcalData(location, date);
+      const tzid = hebcalData?.location?.tzid || "Asia/Jerusalem";
+
+      const zmanimData = await this.getZmanimData(latitude, longitude, date, tzid);
 
       if (zmanimData?.times) {
         // Log available fields for debugging
