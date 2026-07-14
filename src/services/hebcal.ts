@@ -69,7 +69,8 @@ export class HebcalService {
   }
 
   private getCacheKey(location: string, date: string): string {
-    return `${location}_${date}`;
+    const d = date === "today" ? new Date().toISOString().split("T")[0] : date;
+    return `${location}_${d}`;
   }
 
   private getCached(key: string): any | null {
@@ -123,7 +124,10 @@ export class HebcalService {
         config.hebcal.apiBaseUrl,
         {
           params,
-          timeout: 5000, // 5 second timeout to prevent hanging
+          timeout: 10000,
+          headers: {
+            "User-Agent": "WhatsApp-Reminders-Bot/1.0 (https://github.com/)"
+          }
         }
       );
 
@@ -145,7 +149,8 @@ export class HebcalService {
     date?: string,
     tzid?: string
   ): Promise<ZmanimResponse | null> {
-    const cacheKey = `zmanim_${latitude}_${longitude}_${date || "today"}_${tzid || "Asia/Jerusalem"}`;
+    const d = date || new Date().toISOString().split("T")[0];
+    const cacheKey = `zmanim_${latitude}_${longitude}_${d}_${tzid || "Asia/Jerusalem"}`;
     const cached = this.getCached(cacheKey);
     if (cached) {
       return cached;
@@ -167,7 +172,10 @@ export class HebcalService {
         "https://www.hebcal.com/zmanim",
         {
           params,
-          timeout: 5000, // 5 second timeout to prevent hanging
+          timeout: 10000,
+          headers: {
+            "User-Agent": "WhatsApp-Reminders-Bot/1.0 (https://github.com/)"
+          }
         }
       );
 
