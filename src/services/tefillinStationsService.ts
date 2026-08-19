@@ -5,6 +5,13 @@ import type { TefillinStation } from "../types";
 /** Stations farther than this from the user are not considered "nearby". */
 export const MAX_RADIUS_KM = 50;
 
+/** Footer shown at the end of station lookup replies. */
+const STATIONS_DATA_UPDATED_AT = "18/8/26";
+
+function stationsDataFooter(): string {
+  return `_מידע זה מעודכן לתאריך ${STATIONS_DATA_UPDATED_AT}._`;
+}
+
 export type NearbyStation = TefillinStation & { distance_km: number };
 
 /**
@@ -33,7 +40,11 @@ export async function findNearestStations(
  */
 export function formatStationsMessage(stations: NearbyStation[]): string {
   if (stations.length === 0) {
-    return `לא נמצאו עמדות תפילין קרובות אליך (עד ${MAX_RADIUS_KM} ק"מ). 🙏`;
+    return [
+      `לא נמצאו עמדות תפילין קרובות אליך (עד ${MAX_RADIUS_KM} ק"מ). 🙏`,
+      "",
+      stationsDataFooter(),
+    ].join("\n");
   }
 
   const lines: string[] = ["📍 עמדות תפילין קרובות אליך:", ""];
@@ -43,5 +54,6 @@ export function formatStationsMessage(stations: NearbyStation[]): string {
     lines.push(`   🚶 ${s.distance_km.toFixed(1)} ק"מ`);
     lines.push("");
   });
+  lines.push(stationsDataFooter());
   return lines.join("\n").trimEnd();
 }
